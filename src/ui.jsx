@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 export function Token({ size = 14 }) {
@@ -29,6 +30,15 @@ const PALETTES = {
 };
 
 export function Avatar({ user, size = 40 }) {
+  const [broken, setBroken] = useState(false);
+  const photo = !broken && user?.discordAvatarUrl;
+  if (photo) {
+    return (
+      <span className={`avatar has-photo ${user?.vip ? 'vip' : ''}`} style={{ width: size, height: size }}>
+        <img src={photo} alt="" width={size} height={size} onError={() => setBroken(true)} />
+      </span>
+    );
+  }
   const [from, to] = PALETTES[user?.avatar] || PALETTES.default;
   return (
     <span

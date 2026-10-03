@@ -8,6 +8,7 @@ import {
 } from '../shared/chart.js';
 import { LISTING_MS, listingPhase } from '../shared/listings.js';
 import { localWeek, nextSundayMidnight, safeTimeZone } from '../shared/time.js';
+import { discordAvatarUrl, discordName } from './discord.js';
 import { FEE, SHOP, fail, isVip, rid, round, winRate } from './store.js';
 
 export { DURATION };
@@ -52,6 +53,9 @@ export function userDto(user, { self = false, online = false } = {}) {
     avatar: user.avatar,
     chatIcon: user.chatIcon,
     nameColor: user.nameColor,
+    discordUsername: user.discordUsername || null,
+    discordName: discordName(user),
+    discordAvatarUrl: discordAvatarUrl(user),
     online,
     stats: { ...user.stats, winRate: winRate(user) },
     usernameHistory: user.usernameHistory || [],
@@ -104,6 +108,9 @@ export function matchDto(state, match, viewerId) {
       avatar: user.avatar,
       chatIcon: user.chatIcon,
       nameColor: user.nameColor,
+      discordUsername: user.discordUsername || null,
+      discordName: discordName(user),
+      discordAvatarUrl: discordAvatarUrl(user),
       record: reveal(user.id) ? record(user) : null,
     };
   };

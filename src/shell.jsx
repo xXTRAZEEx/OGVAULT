@@ -95,9 +95,9 @@ export function Shell({ children }) {
           )}
           {me ? (
             <>
-              <NavLink to={`/u/${me.username}`} className="me-link">
+              <NavLink to={`/u/${me.username}`} className="me-link" title={me.username}>
                 <Avatar user={me} size={28} />
-                {me.username}
+                <span className="me-name">{me.discordName || me.username}</span>
               </NavLink>
               <button className="btn ghost" onClick={signOut}>Sign out</button>
             </>
@@ -333,6 +333,62 @@ function vaultAnswer(text) {
   return 'I can talk through 1v1 listings, the 5% fee, VIP, snipes, tokens, and cups. Ask one of those.';
 }
 
+function DiscordButton() {
+  const [configured, setConfigured] = useState(null);
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    api('/api/auth/discord')
+      .then((data) => {
+        if (live) setConfigured(!!data.configured);
+      })
+      .catch(() => {
+        if (!live) return;
+        setConfigured(false);
+        setMessage('Discord login is not configured');
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  async function start() {
+    try {
+      const data = configured === null ? await api('/api/auth/discord') : { configured };
+      if (!data.configured) {
+        setConfigured(false);
+        setMessage('Discord login is not configured');
+        return;
+      }
+      window.location.assign('/api/auth/discord/start');
+    } catch {
+      setConfigured(false);
+      setMessage('Discord login is not configured');
+    }
+  }
+
+  const unconfigured = configured === false || message;
+
+  return (
+    <div className="discord-login">
+      <button type="button" className="btn discord" onClick={start}>
+        <DiscordMark />
+        Continue with Discord
+      </button>
+      {unconfigured && <p className="discord-note">Discord login is not configured</p>}
+    </div>
+  );
+}
+
+function DiscordMark() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" d="M19.27 5.33A16.4 16.4 0 0 0 15.2 4l-.4.82a14.7 14.7 0 0 1 3.63 1.4 15.3 15.3 0 0 0-12.86 0A13.5 13.5 0 0 1 9.2 4.82L8.8 4a16.5 16.5 0 0 0-4.08 1.33C2.2 8.55 1.5 11.68 1.7 14.78A16.8 16.8 0 0 0 7 17.3l.72-1.12a11 11 0 0 1-1.78-.86l.45-.35c3.55 1.64 7.4 1.64 10.92 0l.45.35c-.57.35-1.16.64-1.78.86L16.7 17.3a16.8 16.8 0 0 0 5.3-2.52c.28-3.55-.55-6.65-2.73-9.45ZM8.78 13.4c-.98 0-1.78-.9-1.78-2s.8-2 1.78-2 1.8.9 1.8 2-.8 2-1.8 2Zm6.44 0c-.98 0-1.78-.9-1.78-2s.78-2 1.78-2 1.8.9 1.8 2-.8 2-1.8 2Z" />
+    </svg>
+  );
+}
+
 function AuthModal({ mode, onClose, onMode, onDone }) {
   const [error, setError] = useState('');
   const [show, setShow] = useState(false);
@@ -354,6 +410,8 @@ function AuthModal({ mode, onClose, onMode, onDone }) {
 
   return (
     <Modal title={mode === 'up' ? 'Create your account' : 'Sign in'} onClose={onClose}>
+      <DiscordButton />
+      <div className="auth-or">or</div>
       <form className="stack" onSubmit={submit}>
         {mode === 'up' ? (
           <>

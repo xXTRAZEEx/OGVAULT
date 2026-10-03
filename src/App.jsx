@@ -33,22 +33,44 @@ export default function App() {
     if (!localStorage.getItem('ogv_token')) {
       setMe(null);
       setReady(true);
-      return;
+      return null;
     }
     try {
       const data = await api('/api/me');
       setMe(data.user);
+      return data.user;
     } catch {
       setToken(null);
       setMe(null);
+      return null;
     } finally {
       setReady(true);
     }
   }, []);
 
   useEffect(() => {
-    refreshMe();
-  }, [refreshMe]);
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const token = params.get('discord_token');
+    const discordError = params.get('discord_error');
+    const isNew = params.get('discord_new') === '1';
+    if (token || discordError) {
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+    }
+    if (token) setToken(token);
+    if (discordError) {
+      toast(discordError, 'bad');
+      setAuth('in');
+    }
+    refreshMe().then((user) => {
+      if (!token) return;
+      if (!user) {
+        toast('Discord login failed. Try again.', 'bad');
+        setAuth('in');
+        return;
+      }
+      toast(isNew ? 'Vault open. 25 tokens are on your balance.' : `Welcome back, ${user.discordName || user.username}`);
+    });
+  }, [refreshMe, toast]);
 
   useEffect(() => onWs((msg) => {
     if (msg.type === 'lobby') setRev((n) => n + 1);

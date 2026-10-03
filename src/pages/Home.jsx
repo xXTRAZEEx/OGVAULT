@@ -42,7 +42,7 @@ export function Home({ missing = false }) {
         <div className="hero-copy">
           <img className="hero-logo" src="/logo.png" alt="OGVAULT" />
           <h1>OG 1v1s. Real pots.</h1>
-          <p>List a box fight on Eon or Retrac. The other player joins the lobby, you ready up, and the private room is yours.</p>
+          <p>Go back in time to the days of OG 1v1 kill race like nothing done before. Play for real money and see who really has the skill.</p>
           <div className="hero-cta">
             <Link className="btn" to="/play">Create a 1v1</Link>
             <Link className="btn ghost" to="/how-to-play">How a lobby works</Link>

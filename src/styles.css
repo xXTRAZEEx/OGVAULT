@@ -135,6 +135,8 @@ p { margin: 0; }
   border-radius: 999px;
   padding: 6px 10px;
 }
+.me-link { max-width: 220px; }
+.me-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btn, .presets button, .seg button {
   border: 0;
   cursor: pointer;
@@ -297,7 +299,24 @@ p { margin: 0; }
   color: white;
   flex: none;
 }
+.avatar.has-photo { overflow: hidden; }
+.avatar.has-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .avatar.vip { box-shadow: 0 0 0 2px var(--gold); }
+.discord-login { display: flex; flex-direction: column; gap: 8px; }
+.btn.discord { width: 100%; background: #5865F2; }
+.discord-note { margin: 0; color: var(--bad); font-weight: 700; }
+.auth-or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.auth-or::before, .auth-or::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 .uname { display: inline-flex; align-items: center; gap: 4px; font-weight: 800; }
 .uname em { font-style: normal; color: var(--gold); font-size: 10px; border: 1px solid rgba(245, 196, 81, 0.5); border-radius: 99px; padding: 1px 4px; }
 .c-gold { color: var(--gold); }

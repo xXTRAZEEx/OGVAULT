@@ -85,7 +85,10 @@ export function Profile() {
         <Avatar user={user} size={84} />
         <div>
           <p className="kicker">Player {user.vip && '· VIP'}</p>
-          <h1><Name user={user} /></h1>
+          <h1>{user.discordName || <Name user={user} />}</h1>
+          {user.discordName && (
+            <p className="muted">Discord{user.discordUsername ? ` @${user.discordUsername}` : ''} · {user.username}</p>
+          )}
           <p className="muted">Joined {formatDate(user.createdAt)}</p>
         </div>
         <div className="page-actions">
@@ -204,7 +207,7 @@ const LEGAL = {
   privacy: {
     title: 'Privacy',
     body: [
-      'This server stores your email, username, password hash, token ledger, matches, chat, and friends in its local data file.',
+      'This server stores your email, username, password hash, token ledger, matches, chat, and friends in its local data file. If you continue with Discord, it also stores your Discord id, username, and avatar hash. The Discord access token is used only to finish that login and is not kept.',
       'Passwords are hashed with scrypt. Chat and direct messages are stored so the lobby can reload them.',
       'Do not put payment card numbers or government IDs into chat. This build does not ask for them.',
     ],

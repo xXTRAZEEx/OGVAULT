@@ -34,6 +34,17 @@ import {
 } from './logic.js';
 import { SHOP, WELCOME, fail, isVip, load, rid, round, update } from './store.js';
 import { checkoutOrigin, createCoinCheckout, handleStripeWebhook } from './checkout.js';
+import {
+  consumeDiscordState,
+  createDiscordState,
+  discordAuthorizeUrl,
+  discordAppOrigin,
+  discordAvatarUrl,
+  discordConfigured,
+  discordName,
+  discordRedirectUri,
+  fetchDiscordIdentity,
+} from './discord.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -322,6 +333,120 @@ app.post(
       return { token, user: userDto(user, { self: true, online: true }) };
     });
     res.json(result);
+  })
+);
+
+function vaultNameFromDiscord(state, discordUsername) {
+  let base = String(discordUsername || '').replace(/[^a-zA-Z0-9]/g, '');
+  if (base.length < 3) base = `${base}player`.slice(0, 12);
+  base = base.slice(0, 12);
+  let name = base;
+  for (let n = 0; n < 10000; n += 1) {
+    if (n > 0) {
+      const suffix = String(n);
+      name = `${base.slice(0, Math.max(0, 12 - suffix.length))}${suffix}`;
+    }
+    if (!/^[a-zA-Z0-9]{3,12}$/.test(name)) continue;
+    if (!state.users.some((user) => user.username.toLowerCase() === name.toLowerCase())) return name;
+  }
+  return `p${crypto.randomBytes(4).toString('hex')}`.slice(0, 12);
+}
+
+function acceptDiscord(state, profile) {
+  let user = state.users.find((item) => !item.npc && item.discordId === profile.id);
+  let created = false;
+  if (user) {
+    user.discordUsername = profile.username;
+    user.discordAvatar = profile.avatar;
+    user.discordGlobalName = profile.globalName;
+  } else {
+    created = true;
+    const username = vaultNameFromDiscord(state, profile.username);
+    user = {
+      id: rid('u'),
+      username,
+      npc: false,
+      balance: 0,
+      vipUntil: 0,
+      referral: username.toUpperCase(),
+      avatar: 'default',
+      chatIcon: 'none',
+      nameColor: 'default',
+      snipes: 0,
+      shields: 0,
+      excludedUntil: 0,
+      withdrawn: 0,
+      dailyClaimedAt: 0,
+      createdAt: Date.now(),
+      usernameHistory: [],
+      friends: [],
+      skill: 0,
+      stats: { earned: 0, wins: 0, losses: 0, matches: 0, streak: 0, bestStreak: 0, bestScore: 0 },
+      discordId: profile.id,
+      discordUsername: profile.username,
+      discordAvatar: profile.avatar,
+      discordGlobalName: profile.globalName,
+    };
+    state.users.push(user);
+    credit(state, user, WELCOME, 'welcome', {});
+  }
+  const token = crypto.randomBytes(24).toString('hex');
+  state.sessions[token] = user.id;
+  return { token, created };
+}
+
+function discordReturn(res, params) {
+  const url = new URL(`${discordAppOrigin()}/`);
+  url.hash = new URLSearchParams(params).toString();
+  res.redirect(url.toString());
+}
+
+app.get(
+  '/api/auth/discord',
+  route((_req, res) => {
+    res.json({ configured: discordConfigured(), redirectUri: discordRedirectUri() });
+  })
+);
+
+app.get(
+  '/api/auth/discord/start',
+  route((_req, res) => {
+    if (!discordConfigured()) {
+      res.status(503).json({ error: 'Discord login is not configured' });
+      return;
+    }
+    res.redirect(discordAuthorizeUrl(createDiscordState()));
+  })
+);
+
+app.get(
+  '/api/auth/discord/callback',
+  route(async (req, res) => {
+    try {
+      if (!discordConfigured()) {
+        discordReturn(res, { discord_error: 'Discord login is not configured' });
+        return;
+      }
+      if (req.query.error) {
+        discordReturn(res, { discord_error: 'Discord login was cancelled' });
+        return;
+      }
+      const code = String(req.query.code || '');
+      const state = String(req.query.state || '');
+      if (!code || !consumeDiscordState(state)) {
+        discordReturn(res, { discord_error: 'Discord login expired. Try again.' });
+        return;
+      }
+      const profile = await fetchDiscordIdentity(code);
+      const result = update((draft) => acceptDiscord(draft, profile));
+      discordReturn(res, {
+        discord_token: result.token,
+        discord_new: result.created ? '1' : '0',
+      });
+    } catch (error) {
+      console.error('Discord login failed', error.status || '');
+      if (!res.headersSent) discordReturn(res, { discord_error: 'Discord login failed. Try again.' });
+    }
   })
 );
 
@@ -1082,7 +1207,14 @@ wss.on('connection', (ws) => {
             id: row.id,
             text: row.text,
             at: row.at,
-            user: { id: user.id, username: user.username, avatar: user.avatar, nameColor: user.nameColor },
+            user: {
+              id: user.id,
+              username: user.username,
+              avatar: user.avatar,
+              nameColor: user.nameColor,
+              discordName: discordName(user),
+              discordAvatarUrl: discordAvatarUrl(user),
+            },
           },
           to: [match.hostId, match.guestId].filter(Boolean),
         };
