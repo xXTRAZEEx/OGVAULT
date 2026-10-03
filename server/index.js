@@ -40,6 +40,7 @@ import {
   discordAuthorizeUrl,
   discordAppOrigin,
   discordAvatarUrl,
+  discordConfigMessage,
   discordConfigured,
   discordName,
   discordRedirectUri,
@@ -404,18 +405,29 @@ function discordReturn(res, params) {
 app.get(
   '/api/auth/discord',
   route((_req, res) => {
-    res.json({ configured: discordConfigured(), redirectUri: discordRedirectUri() });
+    const error = discordConfigMessage();
+    res.json({ configured: discordConfigured(), redirectUri: discordRedirectUri(), error });
   })
 );
 
 app.get(
   '/api/auth/discord/start',
-  route((_req, res) => {
-    if (!discordConfigured()) {
+  route((req, res) => {
+    const problem = discordConfigMessage();
+    if (problem) {
+      res.status(503).json({ error: problem });
+      return;
+    }
+    const url = discordAuthorizeUrl(createDiscordState());
+    if (!url) {
       res.status(503).json({ error: 'Discord login is not configured' });
       return;
     }
-    res.redirect(discordAuthorizeUrl(createDiscordState()));
+    if (String(req.headers.accept || '').includes('application/json')) {
+      res.json({ url });
+      return;
+    }
+    res.redirect(url);
   })
 );
 

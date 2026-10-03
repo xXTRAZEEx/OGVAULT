@@ -334,19 +334,25 @@ function vaultAnswer(text) {
 }
 
 function DiscordButton() {
-  const [configured, setConfigured] = useState(null);
+  const { toast } = useApp();
   const [message, setMessage] = useState('');
+
+  function showError(text) {
+    const next = text || 'Discord login is unavailable';
+    setMessage(next);
+    toast(next, 'bad');
+  }
 
   useEffect(() => {
     let live = true;
     api('/api/auth/discord')
       .then((data) => {
-        if (live) setConfigured(!!data.configured);
+        if (!live || data.configured) return;
+        setMessage(data.error || 'Discord login is not configured');
       })
-      .catch(() => {
+      .catch((err) => {
         if (!live) return;
-        setConfigured(false);
-        setMessage('Discord login is not configured');
+        setMessage(err.message || 'Discord login is unavailable');
       });
     return () => {
       live = false;
@@ -355,20 +361,18 @@ function DiscordButton() {
 
   async function start() {
     try {
-      const data = configured === null ? await api('/api/auth/discord') : { configured };
-      if (!data.configured) {
-        setConfigured(false);
-        setMessage('Discord login is not configured');
+      const res = await fetch('/api/auth/discord/start', { headers: { Accept: 'application/json' } });
+      const data = await res.json().catch(() => ({}));
+      const url = typeof data.url === 'string' ? data.url.trim() : '';
+      if (!res.ok || !url) {
+        showError(data.error || 'Discord login is not configured');
         return;
       }
-      window.location.assign('/api/auth/discord/start');
-    } catch {
-      setConfigured(false);
-      setMessage('Discord login is not configured');
+      window.location.assign(url);
+    } catch (err) {
+      showError(err.message || 'Discord login is unavailable');
     }
   }
-
-  const unconfigured = configured === false || message;
 
   return (
     <div className="discord-login">
@@ -376,7 +380,7 @@ function DiscordButton() {
         <DiscordMark />
         Continue with Discord
       </button>
-      {unconfigured && <p className="discord-note">Discord login is not configured</p>}
+      {message && <p className="discord-note" role="alert">{message}</p>}
     </div>
   );
 }

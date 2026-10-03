@@ -304,7 +304,7 @@ p { margin: 0; }
 .avatar.vip { box-shadow: 0 0 0 2px var(--gold); }
 .discord-login { display: flex; flex-direction: column; gap: 8px; }
 .btn.discord { width: 100%; background: #5865F2; }
-.discord-note { margin: 0; color: var(--bad); font-weight: 700; }
+.modal p.discord-note { margin: 0; color: var(--bad); font-weight: 700; }
 .auth-or {
   display: flex;
   align-items: center;

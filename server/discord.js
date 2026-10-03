@@ -8,8 +8,24 @@ const usedStates = new Set();
 // Production when APP_ORIGIN is https://ogvault.co.uk:
 //   https://ogvault.co.uk/api/auth/discord/callback
 
+const DISCORD_ENV_NAMES = ['DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET'];
+
+function discordEnvValue(name) {
+  return String(process.env[name] || '').trim();
+}
+
+export function discordMissingEnv() {
+  return DISCORD_ENV_NAMES.filter((name) => !discordEnvValue(name));
+}
+
 export function discordConfigured() {
-  return Boolean(process.env.DISCORD_CLIENT_ID && process.env.DISCORD_CLIENT_SECRET);
+  return discordMissingEnv().length === 0;
+}
+
+export function discordConfigMessage() {
+  const missing = discordMissingEnv();
+  if (!missing.length) return null;
+  return `Discord login is not configured. Missing ${missing.join(' and ')}.`;
 }
 
 export function discordRedirectUri() {
