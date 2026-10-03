@@ -333,6 +333,19 @@ function vaultAnswer(text) {
   return 'I can talk through 1v1 listings, the 5% fee, VIP, snipes, tokens, and cups. Ask one of those.';
 }
 
+function clientDiscordUrl() {
+  const id = String(import.meta.env.VITE_DISCORD_CLIENT_ID || '').trim();
+  if (!/^\d{17,20}$/.test(id)) return '';
+  const params = new URLSearchParams({
+    client_id: id,
+    redirect_uri: `${window.location.origin}/api/auth/discord/callback`,
+    response_type: 'code',
+    scope: 'identify',
+    state: crypto.randomUUID().replace(/-/g, ''),
+  });
+  return `https://discord.com/oauth2/authorize?${params.toString()}`;
+}
+
 function DiscordButton() {
   const { toast } = useApp();
   const [message, setMessage] = useState('');
@@ -360,17 +373,26 @@ function DiscordButton() {
   }, []);
 
   async function start() {
+    const direct = clientDiscordUrl();
     try {
       const res = await fetch('/api/auth/discord/start', { headers: { Accept: 'application/json' } });
       const data = await res.json().catch(() => ({}));
       const url = typeof data.url === 'string' ? data.url.trim() : '';
-      if (!res.ok || !url) {
-        showError(data.error || 'Discord login is not configured');
+      if (res.ok && url.startsWith('https://discord.com/')) {
+        window.location.assign(url);
         return;
       }
-      window.location.assign(url);
+      if (direct) {
+        window.location.assign(direct);
+        return;
+      }
+      showError(data.error || 'Discord login is not configured');
     } catch (err) {
-      showError(err.message || 'Discord login is unavailable');
+      if (direct) {
+        window.location.assign(direct);
+        return;
+      }
+      window.location.assign('/api/auth/discord/start');
     }
   }
 

@@ -57,10 +57,12 @@ function configuredOrigin() {
   return url.origin;
 }
 
-export function discordAuthorizeUrl(state) {
+export function discordAuthorizeUrl(state, redirectUri = discordRedirectUri()) {
+  const clientId = discordEnvValue('DISCORD_CLIENT_ID');
+  if (!clientId || !redirectUri) return '';
   const params = new URLSearchParams({
-    client_id: process.env.DISCORD_CLIENT_ID,
-    redirect_uri: discordRedirectUri(),
+    client_id: clientId,
+    redirect_uri: redirectUri,
     response_type: 'code',
     scope: 'identify',
     state,
@@ -113,13 +115,13 @@ function clip(value, max) {
   return String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max);
 }
 
-export async function fetchDiscordIdentity(code) {
+export async function fetchDiscordIdentity(code, redirectUri = discordRedirectUri()) {
   const body = new URLSearchParams({
     client_id: process.env.DISCORD_CLIENT_ID,
     client_secret: process.env.DISCORD_CLIENT_SECRET,
     grant_type: 'authorization_code',
     code: String(code || ''),
-    redirect_uri: discordRedirectUri(),
+    redirect_uri: redirectUri,
   });
   const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
     method: 'POST',
