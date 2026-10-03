@@ -1,0 +1,23 @@
+{
+  "name": "ogvault",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node dev.js",
+    "api": "node server/index.js",
+    "build": "vite build",
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.1",
+    "stripe": "^22.4.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.0.6"
+  }
+}
