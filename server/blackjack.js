@@ -117,13 +117,29 @@ function takeCards(shoe, cards) {
   }
 }
 
+export function dealerNeedsCard(cards) {
+  return !cards || cards.length < 2 || handTotal(cards).total < 17;
+}
+
+export function dealerHandLegal(cards) {
+  if (!cards || cards.length < 2 || cards.some((card) => !card || card.hidden)) return false;
+  for (let i = 2; i < cards.length; i += 1) {
+    if (!dealerNeedsCard(cards.slice(0, i))) return false;
+  }
+  const total = handTotal(cards).total;
+  return total > 21 || !dealerNeedsCard(cards);
+}
+
 function findBeat(upcard, shoe, playerTotal) {
   if (playerTotal >= 21) return null;
   const used = new Set();
   function search(cards) {
     const total = handTotal(cards).total;
-    if (cards.length >= 2 && total > playerTotal && total <= 21) return cards;
-    if (total >= 21 || cards.length >= 6) return null;
+    if (cards.length >= 2 && total >= 17) {
+      if (total <= 21 && total > playerTotal) return cards;
+      return null;
+    }
+    if (cards.length >= 6) return null;
     const seen = new Set();
     for (let i = 0; i < shoe.length; i += 1) {
       if (used.has(i)) continue;
@@ -207,10 +223,10 @@ function placeBeatingDealer(hand, lockUpcard, playerTotal) {
       }
     }
   }
-  if (!found) return false;
+  if (!found || !dealerHandLegal(found)) return false;
   installDealer(hand, found);
   const dealer = handTotal(hand.dealer).total;
-  return dealer <= 21 && dealer > playerTotal && hand.dealer.length >= 2;
+  return dealerHandLegal(hand.dealer) && dealer <= 21 && dealer > playerTotal;
 }
 
 function tryBias(state, hand, lockShown) {
@@ -255,7 +271,7 @@ function tryBias(state, hand, lockShown) {
   const cardsMatch = outcome === 'push'
     ? player === dealer
     : dealer <= 21 && (dealer > player || (isBlackjack(hand.dealer) && player === 21 && !isBlackjack(hand.player)));
-  if (!cardsMatch || hand.dealer.some((card) => card.hidden)) {
+  if (!cardsMatch || !dealerHandLegal(hand.dealer)) {
     restore();
     return null;
   }
@@ -278,14 +294,18 @@ function settle(state, user, hand, outcome) {
   user.blackjackLast = publicHand(hand, true);
 }
 
-function dealerPlay(hand) {
+function revealHole(hand) {
   if (hand.hole) {
     hand.dealer.push(hand.hole);
     hand.hole = null;
-  } else {
-    hand.dealer.push(draw(hand));
+    return;
   }
-  while (handTotal(hand.dealer).total < 17) hand.dealer.push(draw(hand));
+  if (hand.dealer.length < 2) hand.dealer.push(draw(hand));
+}
+
+function dealerPlay(hand) {
+  revealHole(hand);
+  while (dealerNeedsCard(hand.dealer)) hand.dealer.push(draw(hand));
 }
 
 function finishAgainstDealer(state, user, hand) {
@@ -304,7 +324,9 @@ export function publicHand(hand, reveal) {
   if (!hand) return null;
   const show = reveal || hand.status === 'done';
   const player = handTotal(hand.player);
-  const dealerCards = show ? hand.dealer : [hand.dealer[0], { hidden: true }];
+  const dealerCards = show
+    ? (hand.hole && hand.dealer.length < 2 ? hand.dealer.concat(hand.hole) : hand.dealer)
+    : [hand.dealer[0], { hidden: true }];
   const dealer = show ? handTotal(hand.dealer) : handTotal([hand.dealer[0]]);
   return {
     id: hand.id,
@@ -373,8 +395,10 @@ export function hitBlackjack(state, user) {
   const hand = user.blackjack;
   if (!hand || hand.status !== 'play') fail(400, 'No hand in progress');
   hand.player.push(draw(hand));
-  if (handTotal(hand.player).total > 21) settle(state, user, hand, 'lose');
-  else if (hand.doubled) finishAgainstDealer(state, user, hand);
+  if (handTotal(hand.player).total > 21) {
+    revealHole(hand);
+    settle(state, user, hand, 'lose');
+  } else if (hand.doubled) finishAgainstDealer(state, user, hand);
   return blackjackView(user);
 }
 
@@ -395,7 +419,9 @@ export function doubleBlackjack(state, user) {
   hand.bet = round(hand.bet + extra);
   hand.doubled = true;
   hand.player.push(draw(hand));
-  if (handTotal(hand.player).total > 21) settle(state, user, hand, 'lose');
-  else finishAgainstDealer(state, user, hand);
+  if (handTotal(hand.player).total > 21) {
+    revealHole(hand);
+    settle(state, user, hand, 'lose');
+  } else finishAgainstDealer(state, user, hand);
   return blackjackView(user);
 }

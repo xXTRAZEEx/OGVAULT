@@ -5,6 +5,55 @@ import { PageHead, Token } from '../ui';
 
 const SUIT = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const DEAL_MS = 340;
+let dealAudio = null;
+
+function dealAudioContext() {
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) return null;
+  if (!dealAudio) dealAudio = new AudioCtx();
+  return dealAudio;
+}
+
+function resumeDealAudio() {
+  const ctx = dealAudioContext();
+  if (ctx && ctx.state === 'suspended') ctx.resume();
+}
+
+function playCardSound() {
+  const ctx = dealAudioContext();
+  if (!ctx || ctx.state !== 'running') return;
+  const now = ctx.currentTime;
+  const sampleRate = ctx.sampleRate;
+  const frames = Math.floor(sampleRate * 0.045);
+  const buffer = ctx.createBuffer(1, frames, sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < frames; i += 1) {
+    const fade = 1 - i / frames;
+    data[i] = (Math.random() * 2 - 1) * fade * fade;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = buffer;
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = 1800;
+  filter.Q.value = 0.7;
+  const osc = ctx.createOscillator();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(740, now);
+  osc.frequency.exponentialRampToValueAtTime(320, now + 0.05);
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.09, now + 0.006);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.07);
+  noise.connect(filter);
+  filter.connect(gain);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  noise.start(now);
+  osc.start(now);
+  noise.stop(now + 0.05);
+  osc.stop(now + 0.07);
+}
 
 function prefersReducedMotion() {
   return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -85,14 +134,14 @@ function dealSteps(next) {
     steps.push(frame(next, shownPlayer, shownDealer, false, { side: 'player', index: i, kind: 'deal' }));
   }
   if (reveal && shownDealer[1]?.hidden) {
-    shownDealer = dealer.slice(0, 2);
+    shownDealer = dealer.length >= 2 ? dealer.slice(0, 2) : shownDealer;
     steps.push(frame(next, shownPlayer, shownDealer, false, { side: 'dealer', index: 1, kind: 'flip' }));
   }
   for (let i = 2; i < dealer.length; i += 1) {
     shownDealer = dealer.slice(0, i + 1);
     steps.push(frame(next, shownPlayer, shownDealer, false, { side: 'dealer', index: i, kind: 'deal' }));
   }
-  if (reveal) steps.push(frame(next, player, dealer, true, null));
+  if (reveal) steps.push(frame(next, player, dealer.length >= 2 ? dealer : shownDealer, true, null));
   else if (!steps.length) steps.push(frame(next, player, dealer, false, null));
   return steps;
 }
@@ -109,14 +158,16 @@ function continueSteps(prev, next) {
   }
   const reveal = next.status === 'done';
   if (reveal && shownDealer.some((card) => card.hidden)) {
-    shownDealer = dealer.slice(0, 2);
+    const hole = dealer[1] && !dealer[1].hidden ? dealer[1] : shownDealer[1];
+    shownDealer = [dealer[0] || shownDealer[0], hole].filter(Boolean);
     steps.push(frame(next, shownPlayer, shownDealer, false, { side: 'dealer', index: 1, kind: 'flip' }));
   }
   for (let i = shownDealer.length; i < dealer.length; i += 1) {
     shownDealer = dealer.slice(0, i + 1);
     steps.push(frame(next, shownPlayer, shownDealer, false, { side: 'dealer', index: i, kind: 'deal' }));
   }
-  if (reveal) steps.push(frame(next, player, dealer, true, null));
+  const settledDealer = dealer.length >= shownDealer.length ? dealer : shownDealer;
+  if (reveal) steps.push(frame(next, player, settledDealer, true, null));
   if (!steps.length) steps.push(frame(next, player, dealer, reveal, null));
   return steps;
 }
@@ -151,6 +202,12 @@ export function Blackjack() {
       setBusy(false);
       return;
     }
+    const sequence = shownRef.current?.id === next.id ? continueSteps(shownRef.current, next) : dealSteps(next);
+    sequence.forEach((step, index) => {
+      if (step.motion?.kind !== 'deal' && step.motion?.kind !== 'flip') return;
+      const id = setTimeout(() => playCardSound(), reduced ? index * 70 : DEAL_MS * index);
+      timers.current.push(id);
+    });
     if (!animate || reduced) {
       const done = frame(next, next.player || [], next.dealer || [], next.status === 'done', null);
       shownRef.current = done;
@@ -159,7 +216,6 @@ export function Blackjack() {
       if (done.showResult) toast(outcomeText(done));
       return;
     }
-    const sequence = shownRef.current?.id === next.id ? continueSteps(shownRef.current, next) : dealSteps(next);
     setBusy(true);
     sequence.forEach((step, index) => {
       const id = setTimeout(() => {
@@ -260,7 +316,7 @@ export function Blackjack() {
           </label>
         )}
         {!playing && (
-          <button className="btn" type="button" disabled={busy} onClick={() => act('/api/blackjack/deal', { bet })}>Deal</button>
+          <button className="btn" type="button" disabled={busy} onClick={() => { resumeDealAudio(); act('/api/blackjack/deal', { bet }); }}>Deal</button>
         )}
         <button className="btn" type="button" disabled={busy || !playing || !hand?.canHit} onClick={() => act('/api/blackjack/hit')}>Hit</button>
         <button className="btn ghost" type="button" disabled={busy || !playing || !hand?.canStand} onClick={() => act('/api/blackjack/stand')}>Stand</button>
