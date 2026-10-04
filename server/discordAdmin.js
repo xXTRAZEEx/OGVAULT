@@ -56,10 +56,10 @@ const commands = [
         .addIntegerOption((option) =>
           option
             .setName('percent')
-            .setDescription('0 is fair, 40 is the maximum dealer edge')
+            .setDescription('0 is fair, 100 is the maximum dealer edge')
             .setRequired(false)
             .setMinValue(0)
-            .setMaxValue(40)
+            .setMaxValue(100)
         )
     ),
   new SlashCommandBuilder()
@@ -420,7 +420,7 @@ export function setChatClearedHook(fn) {
 
 function biasReply(percent, updated) {
   const lead = updated ? `Dealer bias set to ${percent}%.` : `Dealer bias is ${percent}%.`;
-  return `${lead} /blackjack bias with no percent shows the current value. Pass percent from 0 to 40 to change it. 0 is a fair shoe. Above 0, when the player would win, including a blackjack, the server has that chance to settle the hand for the dealer before the result is shown. The cards match that settlement. Pushes stay pushes.`;
+  return `${lead} /blackjack bias with no percent shows the current value. Pass percent from 0 to 100 to change it. 0 is a fair shoe. Above 0, when the player would win, including a blackjack, the server has that chance to settle the hand for the dealer before the result is shown. At 100 it tries on every player win. The dealer still stands on 17 or more, and if a dealer win cannot be built legally the fair win stands. The cards match that settlement. Pushes stay pushes.`;
 }
 
 function readOrSetBlackjackBias(percent) {

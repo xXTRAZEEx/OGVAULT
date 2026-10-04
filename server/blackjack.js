@@ -65,7 +65,7 @@ export function parseBet(raw, balance) {
 }
 
 export const BLACKJACK_BIAS_DEFAULT = 8;
-export const BLACKJACK_BIAS_MAX = 40;
+export const BLACKJACK_BIAS_MAX = 100;
 
 export function blackjackBiasPercent(state) {
   const raw = state?.settings?.blackjackBias;
@@ -77,7 +77,7 @@ export function blackjackBiasPercent(state) {
 
 export function setBlackjackBias(state, percent) {
   const n = Math.round(Number(percent));
-  if (!Number.isFinite(n) || n < 0 || n > BLACKJACK_BIAS_MAX) fail(400, 'Bias percent must be from 0 to 40');
+  if (!Number.isFinite(n) || n < 0 || n > BLACKJACK_BIAS_MAX) fail(400, 'Bias percent must be from 0 to 100');
   if (!state.settings || typeof state.settings !== 'object' || Array.isArray(state.settings)) state.settings = {};
   state.settings.blackjackBias = n;
   return n;
