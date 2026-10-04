@@ -35,9 +35,10 @@ import {
   userDto,
   walletSnapshot,
 } from './logic.js';
+import { blackjackView, dealBlackjack, doubleBlackjack, hitBlackjack, standBlackjack } from './blackjack.js';
 import { SHOP, fail, load, rid, round, update } from './store.js';
 import { checkoutOrigin, createCoinCheckout, handleStripeWebhook } from './checkout.js';
-import { sendClipReview, setReviewSettleHook, startDiscordAdmin } from './discordAdmin.js';
+import { sendClipReview, setChatClearedHook, setReviewSettleHook, startDiscordAdmin } from './discordAdmin.js';
 import {
   consumeDiscordState,
   createDiscordState,
@@ -1684,6 +1685,65 @@ app.post(
 );
 
 app.get(
+  '/api/blackjack',
+  route((req, res) => {
+    const me = requireUser(req);
+    const state = load();
+    const user = state.users.find((item) => item.id === me.id);
+    res.json(blackjackView(user));
+  })
+);
+
+app.post(
+  '/api/blackjack/deal',
+  route((req, res) => {
+    const me = requireUser(req);
+    assertPlay(me);
+    const result = update((state) => {
+      const user = state.users.find((item) => item.id === me.id);
+      return dealBlackjack(state, user, req.body.bet);
+    });
+    res.json(result);
+  })
+);
+
+app.post(
+  '/api/blackjack/hit',
+  route((req, res) => {
+    const me = requireUser(req);
+    const result = update((state) => {
+      const user = state.users.find((item) => item.id === me.id);
+      return hitBlackjack(state, user);
+    });
+    res.json(result);
+  })
+);
+
+app.post(
+  '/api/blackjack/stand',
+  route((req, res) => {
+    const me = requireUser(req);
+    const result = update((state) => {
+      const user = state.users.find((item) => item.id === me.id);
+      return standBlackjack(state, user);
+    });
+    res.json(result);
+  })
+);
+
+app.post(
+  '/api/blackjack/double',
+  route((req, res) => {
+    const me = requireUser(req);
+    const result = update((state) => {
+      const user = state.users.find((item) => item.id === me.id);
+      return doubleBlackjack(state, user);
+    });
+    res.json(result);
+  })
+);
+
+app.get(
   '/api/shop',
   route((_req, res) => res.json({ shop: SHOP }))
 );
@@ -2078,6 +2138,7 @@ server.listen(port, host, () => {
     pingMatch(matchId);
     pingLobby();
   });
+  setChatClearedHook(() => broadcast({ type: 'chatclear' }));
   startDiscordAdmin();
 });
 

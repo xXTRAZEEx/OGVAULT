@@ -22,6 +22,7 @@ import {
   removeInventoryItem,
   settleAgreed,
 } from './logic.js';
+import { blackjackBiasPercent, setBlackjackBias } from './blackjack.js';
 import { fail, load, rid, round, update } from './store.js';
 
 const commands = [
@@ -41,6 +42,25 @@ const commands = [
         .addNumberOption((option) => option.setName('first').setDescription('1st place prize in tokens').setRequired(true).setMinValue(0))
         .addNumberOption((option) => option.setName('second').setDescription('2nd place prize in tokens').setRequired(true).setMinValue(0))
         .addNumberOption((option) => option.setName('third').setDescription('3rd place prize in tokens').setRequired(true).setMinValue(0))
+    ),
+  new SlashCommandBuilder()
+    .setName('clearchat')
+    .setDescription("Clear the site's public Live Chat"),
+  new SlashCommandBuilder()
+    .setName('blackjack')
+    .setDescription('Blackjack house settings')
+    .addSubcommand((sub) =>
+      sub
+        .setName('bias')
+        .setDescription('Show or set how often a player win is settled for the dealer')
+        .addIntegerOption((option) =>
+          option
+            .setName('percent')
+            .setDescription('0 is fair, 40 is the maximum dealer edge')
+            .setRequired(false)
+            .setMinValue(0)
+            .setMaxValue(40)
+        )
     ),
   new SlashCommandBuilder()
     .setName('ban')
@@ -388,9 +408,36 @@ function setMatchmaking(enabled, lengthHours) {
 let bot = null;
 let botFailed = false;
 let afterReviewSettled = () => {};
+let afterChatCleared = () => {};
 
 export function setReviewSettleHook(fn) {
   afterReviewSettled = typeof fn === 'function' ? fn : () => {};
+}
+
+export function setChatClearedHook(fn) {
+  afterChatCleared = typeof fn === 'function' ? fn : () => {};
+}
+
+function biasReply(percent, updated) {
+  const lead = updated ? `Dealer bias set to ${percent}%.` : `Dealer bias is ${percent}%.`;
+  return `${lead} /blackjack bias with no percent shows the current value. Pass percent from 0 to 40 to change it. 0 is a fair shoe. Above 0, when the player would win, including a blackjack, the server has that chance to settle the hand for the dealer before the result is shown. The cards match that settlement. Pushes stay pushes.`;
+}
+
+function readOrSetBlackjackBias(percent) {
+  return update((state) => {
+    if (percent == null) return { percent: blackjackBiasPercent(state), updated: false };
+    return { percent: setBlackjackBias(state, percent), updated: true };
+  });
+}
+
+function clearPublicChat() {
+  const result = update((state) => {
+    const removed = Array.isArray(state.chat) ? state.chat.length : 0;
+    state.chat = [];
+    return { removed };
+  });
+  afterChatCleared();
+  return result;
 }
 
 function reviewUnavailable() {
@@ -548,6 +595,20 @@ async function handleCommand(interaction) {
         content: `Cup ${cup.name} is open for ${cup.maxPlayers} players until <t:${Math.floor(cup.endsAt / 1000)}:f>.`,
         ephemeral: true,
       });
+      return;
+    }
+    if (interaction.commandName === 'clearchat') {
+      const result = clearPublicChat();
+      const count = result.removed;
+      await interaction.reply({
+        content: `Cleared ${count} public Live Chat message${count === 1 ? '' : 's'}.`,
+        ephemeral: true,
+      });
+      return;
+    }
+    if (interaction.commandName === 'blackjack' && interaction.options.getSubcommand() === 'bias') {
+      const result = readOrSetBlackjackBias(interaction.options.getInteger('percent'));
+      await interaction.reply({ content: biasReply(result.percent, result.updated), ephemeral: true });
       return;
     }
     if (interaction.commandName === 'ban') {

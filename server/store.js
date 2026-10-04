@@ -192,6 +192,14 @@ export function load() {
       match.reports = match.reports || {};
     });
     if (stripBots(state)) migrated = true;
+    if (!state.settings || typeof state.settings !== 'object' || Array.isArray(state.settings)) {
+      state.settings = {};
+      migrated = true;
+    }
+    if (state.settings.blackjackBias == null || state.settings.blackjackBias === '') {
+      state.settings.blackjackBias = 8;
+      migrated = true;
+    }
     if (state.potw && (state.potw.candidates || state.potw.voters || typeof state.potw.endsAt !== 'number')) {
       state.potw = { endsAt: state.potw.endsAt || Date.now() + 7 * 86400000 };
       migrated = true;

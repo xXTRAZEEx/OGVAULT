@@ -19,6 +19,7 @@ const TX = {
   tournament: 'Cup',
   potw: 'Week prize',
   rename: 'Rename',
+  blackjack: 'Blackjack',
 };
 
 const SHOP_COPY = {

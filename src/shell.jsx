@@ -13,6 +13,7 @@ const NAV = [
   ['Shop', '/shop', ShopIcon],
   ['Wallet', '/wallet', WalletIcon],
   ['Rewards', '/rewards', GiftIcon],
+  ['Blackjack', '/blackjack', CardIcon],
 ];
 
 export function Shell({ children }) {
@@ -188,6 +189,10 @@ function Chat() {
   useEffect(() => {
     api('/api/chat').then((data) => setMessages(data.messages)).catch(() => {});
     return onWs((msg) => {
+      if (msg.type === 'chatclear') {
+        setMessages([]);
+        return;
+      }
       if (msg.type !== 'chat' || !msg.message) return;
       setMessages((list) => {
         if (list.some((item) => item.id === msg.message.id)) return list;
@@ -411,5 +416,6 @@ function StarIcon() { return <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="
 function ShopIcon() { return <svg viewBox="0 0 24 24"><path d="M4 8h16l-1 12H5zM8 8V6a4 4 0 0 1 8 0v2" /></svg>; }
 function WalletIcon() { return <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2" /><path d="M3 10h18M16 14h3" /></svg>; }
 function GiftIcon() { return <svg viewBox="0 0 24 24"><path d="M4 11h16v9H4zM3 7h18v4H3zM12 7v13M12 7c-2 0-3-2-2-3s3 0 2 3zM12 7c2 0 3-2 2-3s-3 0-2 3z" /></svg>; }
+function CardIcon() { return <svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="16" rx="2" /><path d="M12 8v4M10 10h4" /></svg>; }
 function SearchIcon() { return <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6" /><path d="M16 16l4 4" /></svg>; }
 function ChatIcon() { return <svg viewBox="0 0 24 24"><path d="M5 6h14v9H8l-3 3z" /></svg>; }
