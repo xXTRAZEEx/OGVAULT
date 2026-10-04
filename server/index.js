@@ -2037,9 +2037,10 @@ wss.on('connection', (ws) => {
 });
 
 const port = Number(process.env.PORT || 8787);
+const host = process.env.HOST || '127.0.0.1';
 server.on('error', (error) => console.error(error));
 process.on('uncaughtException', (error) => console.error(error));
-server.listen(port, '127.0.0.1', () => {
+server.listen(port, host, () => {
   load();
   update((state) => {
     closeFinishedMatches(state);
@@ -2047,7 +2048,7 @@ server.listen(port, '127.0.0.1', () => {
     ensureSparringListing(state);
     sparringCastWin(state);
   });
-  console.log(`OGVAULT API on http://127.0.0.1:${port}`);
+  console.log(`OGVAULT API on http://${host}:${port}`);
   setReviewSettleHook((matchId) => {
     pingMatch(matchId);
     pingLobby();
