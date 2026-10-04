@@ -1,6 +1,15 @@
 import { authorizeUrl, sendPage } from '../../discordPage.js';
 
+const API_START = 'https://api.ogvault.co.uk/api/auth/discord/start';
+
 export default function handler(req, res) {
+  if (!String(req.headers.accept || '').includes('application/json')) {
+    res.statusCode = 302;
+    res.setHeader('Location', API_START);
+    res.setHeader('Cache-Control', 'no-store');
+    res.end();
+    return;
+  }
   const url = authorizeUrl(req);
   if (!url) {
     sendPage(

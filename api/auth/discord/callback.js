@@ -1,20 +1,23 @@
-import { finishDiscordLogin, sendPage } from '../../discordPage.js';
+const API_ORIGIN = 'https://api.ogvault.co.uk';
 
-export default async function handler(req, res) {
-  if (req.query?.error) {
-    sendPage(res, 400, 'Discord login cancelled', 'Discord sent you back without signing in. Try Continue with Discord again.');
-    return;
+function queryString(req) {
+  const params = new URLSearchParams();
+  const query = req.query || {};
+  for (const [key, value] of Object.entries(query)) {
+    if (Array.isArray(value)) {
+      for (const item of value) params.append(key, String(item));
+    } else if (value != null) {
+      params.append(key, String(value));
+    }
   }
-  try {
-    const profile = await finishDiscordLogin(req);
-    const name = profile.globalName || profile.username;
-    sendPage(
-      res,
-      200,
-      'Discord connected',
-      `Discord recognized ${name}. This Vercel site does not run the OGVAULT game server, so a vault session was not saved. Point ogvault.co.uk at the host that runs the API, then sign in again.`
-    );
-  } catch (error) {
-    sendPage(res, error.status || 502, 'Discord login', error.message || 'Discord login failed. Try again.');
-  }
+  const text = params.toString();
+  return text ? `?${text}` : '';
+}
+
+export default function handler(req, res) {
+  const target = `${API_ORIGIN}/api/auth/discord/callback${queryString(req)}`;
+  res.statusCode = 302;
+  res.setHeader('Location', target);
+  res.setHeader('Cache-Control', 'no-store');
+  res.end();
 }

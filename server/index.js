@@ -2071,7 +2071,6 @@ server.listen(port, host, () => {
   update((state) => {
     closeFinishedMatches(state);
     releaseSupersededSparring(state);
-    ensureSparringListing(state);
     sparringCastWin(state);
   });
   console.log(`OGVAULT API on http://${host}:${port}`);
