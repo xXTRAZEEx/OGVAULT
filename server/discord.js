@@ -38,6 +38,76 @@ export function discordAppOrigin() {
   return configuredOrigin() || 'http://127.0.0.1:5173';
 }
 
+export function reviewSiteOrigins() {
+  const local = 'http://127.0.0.1:5173';
+  let configured = null;
+  try {
+    configured = configuredOrigin();
+  } catch {
+    configured = null;
+  }
+  if (configured && configured !== local) return [local, configured];
+  return [local];
+}
+
+// Discord rejects link-button URLs on loopback hosts (127.0.0.1, localhost).
+// A components payload with those URLs is dropped, so the embed arrives with no buttons.
+export function discordAllowsButtonUrl(raw) {
+  let url;
+  try {
+    url = new URL(String(raw || ''));
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (!host) return false;
+  if (host === 'localhost' || host.endsWith('.localhost')) return false;
+  if (host === '127.0.0.1' || host === '0.0.0.0' || host === '::1') return false;
+  return true;
+}
+
+let cachedReviewChannelId = '';
+
+function webhookChannelUrl() {
+  const webhook = String(process.env.DISCORD_DISPUTE_WEBHOOK_URL || '').trim();
+  if (!webhook) return '';
+  let url;
+  try {
+    url = new URL(webhook);
+  } catch {
+    return '';
+  }
+  const host = url.hostname.toLowerCase();
+  const allowed = host === 'discord.com' || host === 'discordapp.com' || host.endsWith('.discord.com') || host.endsWith('.discordapp.com');
+  if (url.protocol !== 'https:' || !allowed || !url.pathname.startsWith('/api/webhooks/')) return '';
+  return url.toString();
+}
+
+export async function disputeReviewChannelId() {
+  if (/^\d{5,32}$/.test(cachedReviewChannelId)) return cachedReviewChannelId;
+  const webhook = webhookChannelUrl();
+  if (webhook) {
+    try {
+      const res = await fetch(webhook, { method: 'GET' });
+      const payload = await res.json().catch(() => ({}));
+      const id = String(payload?.channel_id || '');
+      if (res.ok && /^\d{5,32}$/.test(id)) {
+        cachedReviewChannelId = id;
+        return id;
+      }
+    } catch {
+      cachedReviewChannelId = '';
+    }
+  }
+  const fallback = String(process.env.DISCORD_REVIEW_CHANNEL_ID || '').trim();
+  if (/^\d{5,32}$/.test(fallback)) {
+    cachedReviewChannelId = fallback;
+    return fallback;
+  }
+  return '';
+}
+
 function configuredOrigin() {
   const configured = process.env.APP_ORIGIN;
   if (!configured) return null;

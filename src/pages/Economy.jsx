@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useApp } from '../App';
 import { ago, format, formatDate, useNow } from '../format';
-import { Amount, PageHead, Token } from '../ui';
+import { Amount, FrameFx, PageHead, Token } from '../ui';
 
 const TX = {
   welcome: 'Welcome',
@@ -21,31 +21,235 @@ const TX = {
   rename: 'Rename',
 };
 
+const SHOP_COPY = {
+  vip: '30 days. Gold frame, crown, and 10 snipes.',
+};
+
+const PORTRAITS = {
+  'avatar-heat': 'Heat portrait',
+  'avatar-frost': 'Frost portrait',
+  'avatar-gold': 'Gold portrait',
+};
+const MARKS = {
+  'avatar-retrac': 'Retrac',
+  'avatar-eon': 'Eon',
+};
+const MARK_ART = {
+  'avatar-retrac': '/styles/retrac.png',
+  'avatar-eon': '/styles/eon.png',
+};
+const COLORS = { blue: 'Blue name', gold: 'Gold name' };
+
+function shopBlurb(item) {
+  if (SHOP_COPY[item.id]) return SHOP_COPY[item.id];
+  return String(item.blurb || '').replace(/cook\s*up/gi, '').trim();
+}
+
+function inventoryRows(me, now) {
+  if (!me) return [];
+  const rows = [];
+  if (me.vip && me.vipUntil > now) {
+    const days = Math.max(1, Math.ceil((me.vipUntil - now) / 86400000));
+    rows.push({ id: 'vip', name: 'OG VIP', detail: `${days} day${days === 1 ? '' : 's'} left` });
+  }
+  if (me.snipes > 0) rows.push({ id: 'snipes', name: 'Snipes', detail: `${me.snipes} remaining` });
+  if (me.shields > 0) rows.push({ id: 'shield', name: 'Streak shield', detail: `${me.shields} ready` });
+  for (const id of me.ownedAvatars || []) {
+    if (!PORTRAITS[id]) continue;
+    rows.push({
+      id,
+      name: PORTRAITS[id],
+      detail: me.avatar === id ? 'Equipped' : 'Owned',
+      slot: 'avatar',
+      cosmetic: id,
+      equipped: me.avatar === id,
+    });
+  }
+  for (const id of me.ownedMarks || []) {
+    if (!MARKS[id]) continue;
+    rows.push({
+      id,
+      name: MARKS[id],
+      detail: me.chatIcon === id ? 'Equipped' : 'Owned',
+      slot: 'mark',
+      cosmetic: id,
+      equipped: me.chatIcon === id,
+    });
+  }
+  for (const id of me.ownedColors || []) {
+    if (!COLORS[id]) continue;
+    rows.push({
+      id: `color-${id}`,
+      name: COLORS[id],
+      detail: me.nameColor === id ? 'Equipped' : 'Owned',
+      slot: 'color',
+      cosmetic: id,
+      equipped: me.nameColor === id,
+    });
+  }
+  return rows;
+}
+
+function ownsItem(me, item) {
+  if (!me) return false;
+  if (item.id === 'vip') return !!(me.vip && me.vipUntil > Date.now());
+  if (MARKS[item.id]) return (me.ownedMarks || []).includes(item.id);
+  if (item.id.startsWith('avatar-')) return (me.ownedAvatars || []).includes(item.id);
+  if (item.id === 'color-blue') return (me.ownedColors || []).includes('blue');
+  if (item.id === 'color-gold') return (me.ownedColors || []).includes('gold');
+  return false;
+}
+
+function slotOf(item) {
+  if (MARKS[item.id]) return { slot: 'mark', id: item.id, equipped: (me) => me?.chatIcon === item.id };
+  if (item.id.startsWith('avatar-')) return { slot: 'avatar', id: item.id, equipped: (me) => me?.avatar === item.id };
+  if (item.id === 'color-blue') return { slot: 'color', id: 'blue', equipped: (me) => me?.nameColor === 'blue' };
+  if (item.id === 'color-gold') return { slot: 'color', id: 'gold', equipped: (me) => me?.nameColor === 'gold' };
+  return null;
+}
+
+function ShopPreview({ id }) {
+  if (id === 'vip') {
+    return (
+      <div className="shop-preview" aria-hidden="true">
+        <span className="shop-ava vip-sample">
+          V
+          <svg className="shop-crown" viewBox="0 0 12 12"><path d="M1 9h10L9.5 4 7 6.5 6 3 5 6.5 2.5 4z" fill="#f5c451" /></svg>
+          <FrameFx vip />
+        </span>
+      </div>
+    );
+  }
+  if (id === 'snipes') {
+    return (
+      <div className="shop-preview" aria-hidden="true">
+        <svg className="shop-glyph" viewBox="0 0 32 32">
+          <path d="M4 16s4.5-7 12-7 12 7 12 7-4.5 7-12 7S4 16 4 16z" fill="none" stroke="#8eb0ff" strokeWidth="2" />
+          <circle cx="16" cy="16" r="3.2" fill="#2f6bff" />
+        </svg>
+      </div>
+    );
+  }
+  if (id === 'shield') {
+    return (
+      <div className="shop-preview" aria-hidden="true">
+        <svg className="shop-glyph" viewBox="0 0 32 32">
+          <path d="M16 4l10 4v8c0 6.2-4.2 10.4-10 12-5.8-1.6-10-5.8-10-12V8z" fill="none" stroke="#8eb0ff" strokeWidth="2" />
+          <path d="M11 16l3.2 3.2L21 12.4" fill="none" stroke="#f5c451" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+      </div>
+    );
+  }
+  if (MARK_ART[id]) {
+    return (
+      <div className="shop-preview" aria-hidden="true">
+        <span className="shop-name">
+          Player
+          <img className={`name-mark ${id === 'avatar-retrac' ? 'retrac' : 'eon'}`} src={MARK_ART[id]} alt="" />
+        </span>
+      </div>
+    );
+  }
+  if (id.startsWith('avatar-')) {
+    return (
+      <div className="shop-preview" aria-hidden="true">
+        <span className={`shop-ava ring-${id.slice(7)}`}>
+          A
+          <FrameFx heat={id === 'avatar-heat'} frost={id === 'avatar-frost'} />
+        </span>
+      </div>
+    );
+  }
+  if (id === 'color-blue' || id === 'color-gold') {
+    return (
+      <div className="shop-preview" aria-hidden="true">
+        <span className={`shop-name ${id === 'color-gold' ? 'c-gold' : 'c-blue'}`}>Player</span>
+      </div>
+    );
+  }
+  return null;
+}
+
 export function Shop() {
   const { me, setAuth, setMe, toast } = useApp();
+  const now = useNow(60000);
   const [shop, setShop] = useState([]);
+  const owned = inventoryRows(me, now);
   useEffect(() => { api('/api/shop').then((data) => setShop(data.shop)); }, []);
+  useEffect(() => {
+    if (window.location.hash === '#inventory') {
+      document.getElementById('inventory')?.scrollIntoView();
+    }
+  }, []);
+
+  async function wear(slot, id, equip) {
+    try {
+      const data = await api(equip ? '/api/shop/equip' : '/api/shop/unequip', {
+        method: 'POST',
+        body: equip ? { slot, id } : { slot },
+      });
+      setMe(data.user);
+    } catch (err) { toast(err.message, 'bad'); }
+  }
+
   return (
     <div className="stack-lg">
       <PageHead kicker="Style and edge" title="Shop" text="Spend tokens on VIP, snipes, shields, and marks. Nothing here bills a card." />
-      <div className="shop-grid">
-        {shop.map((item) => (
-          <article key={item.id} className="panel item">
-            <span className="tag">{item.tag}</span>
-            <h2>{item.name}</h2>
-            <p>{item.blurb}</p>
-            <button className="btn" onClick={async () => {
-              if (!me) { setAuth('in'); return; }
-              try {
-                const data = await api('/api/shop/buy', { method: 'POST', body: { itemId: item.id } });
-                setMe(data.user);
-                toast(`${item.name} is yours`);
-              } catch (err) { toast(err.message, 'bad'); }
-            }}>
-              <Token /> {format(item.price)}
-            </button>
-          </article>
+      <section className="panel" id="inventory">
+        <h2>Inventory</h2>
+        {!me && <p className="muted">Sign in to see what you have bought.</p>}
+        {me && !owned.length && <p className="muted">You have not bought anything yet.</p>}
+        {owned.map((row) => (
+          <div className="inv-row" key={row.id}>
+            <span>{row.name}</span>
+            <span className="muted">{row.detail}</span>
+            {row.slot && (
+              row.equipped
+                ? <button className="btn ghost" onClick={() => wear(row.slot, row.cosmetic, false)}>Unequip</button>
+                : <button className="btn ghost" onClick={() => wear(row.slot, row.cosmetic, true)}>Equip</button>
+            )}
+          </div>
         ))}
+      </section>
+      <div className="shop-grid">
+        {shop.map((item) => {
+          const cosmetic = slotOf(item);
+          const bought = ownsItem(me, item);
+          const equipped = cosmetic ? cosmetic.equipped(me) : false;
+          return (
+            <article key={item.id} className="panel item">
+              <ShopPreview id={item.id} />
+              <span className="tag">{item.tag}</span>
+              <h2>{item.name}</h2>
+              <p>{shopBlurb(item)}</p>
+              {bought && cosmetic && equipped && (
+                <div className="item-actions">
+                  <span className="tag gold">Equipped</span>
+                  <button className="btn ghost" onClick={() => wear(cosmetic.slot, cosmetic.id, false)}>Unequip</button>
+                </div>
+              )}
+              {bought && cosmetic && !equipped && (
+                <div className="item-actions">
+                  <span className="tag">Purchased</span>
+                  <button className="btn" onClick={() => wear(cosmetic.slot, cosmetic.id, true)}>Equip</button>
+                </div>
+              )}
+              {bought && !cosmetic && <span className="tag gold">Purchased</span>}
+              {!bought && (
+                <button className="btn" onClick={async () => {
+                  if (!me) { setAuth('in'); return; }
+                  try {
+                    const data = await api('/api/shop/buy', { method: 'POST', body: { itemId: item.id } });
+                    setMe(data.user);
+                    toast(`${item.name} is yours`);
+                  } catch (err) { toast(err.message, 'bad'); }
+                }}>
+                  <Token /> {format(item.price)}
+                </button>
+              )}
+            </article>
+          );
+        })}
       </div>
     </div>
   );
@@ -53,11 +257,11 @@ export function Shop() {
 
 const PACKS = [
   { coins: 5, price: 5, tone: 'blue' },
-  { coins: 10, price: 10, tone: 'gold' },
-  { coins: 15, price: 15, tone: 'blue' },
-  { coins: 20, price: 20, tone: 'green' },
-  { coins: 25, price: 25, tone: 'gold' },
-  { coins: 50, price: 50, tone: 'green' },
+  { coins: 10, price: 10, tone: 'green' },
+  { coins: 15, price: 15, tone: 'purple' },
+  { coins: 20, price: 20, tone: 'gold' },
+  { coins: 25, price: 25, tone: 'red' },
+  { coins: 50, price: 50, tone: 'orange' },
 ];
 
 const NETWORKS = ['Solana', 'Ethereum', 'Bitcoin'];
@@ -67,8 +271,18 @@ function cents(n) {
   return Number.isFinite(value) ? value : 0;
 }
 
-function usd(n) {
-  return `$${cents(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+function gbp(n) {
+  return `£${cents(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function ChargeLines({ price }) {
+  const pack = cents(price);
+  if (pack < 1) return null;
+  return (
+    <div className="pack-charge">
+      <p className="pack-price">{gbp(pack)}</p>
+    </div>
+  );
 }
 
 function txLabel(tx) {
@@ -103,7 +317,6 @@ export function Wallet() {
   const [txs, setTxs] = useState([]);
   const [withdrawals, setWithdrawals] = useState([]);
   const [custom, setCustom] = useState('');
-  const [referral, setReferral] = useState('');
   const [method, setMethod] = useState('crypto');
   const [network, setNetwork] = useState('Solana');
   const [amount, setAmount] = useState('');
@@ -150,7 +363,7 @@ export function Wallet() {
     if (buying) return;
     setBuying(true);
     try {
-      const data = await api('/api/wallet/checkout', { method: 'POST', body: { amount: value, referral: referral.trim() } });
+      const data = await api('/api/wallet/checkout', { method: 'POST', body: { amount: value } });
       if (!data.url) {
         toast('Checkout is not configured', 'bad');
         setBuying(false);
@@ -178,7 +391,7 @@ export function Wallet() {
 
   return (
     <div className="stack-lg">
-      <PageHead kicker="Ledger" title="Wallet" text="Vault Tokens live on this server. Packs are one US dollar per coin and open checkout. Tokens are added after the payment is confirmed. Withdrawals stay pending for 24 hours." />
+      <PageHead kicker="Ledger" title="Wallet" text="Vault Tokens live on this server. Packs are one pound per coin. Tokens are added after the payment is confirmed. Withdrawals stay pending for 24 hours." />
       <div className="wallet-tabs" role="tablist">
         {[['deposit', 'Deposit'], ['withdraw', 'Withdraw'], ['tips', 'Tips']].map(([id, label]) => (
           <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'on' : ''} onClick={() => openTab(id)}>{label}</button>
@@ -191,23 +404,22 @@ export function Wallet() {
             <label>Custom amount
               <span className="money">
                 <input type="number" min="1" step="0.01" value={custom} onChange={(event) => setCustom(event.target.value)} />
-                <b>$</b>
+                <b>£</b>
               </span>
             </label>
             <button className="btn" type="button" disabled={buying} onClick={() => buy(custom)}>Deposit</button>
-            <label>Referral code <span>(optional)</span>
-              <input value={referral} onChange={(event) => setReferral(event.target.value)} autoComplete="off" />
-            </label>
           </div>
+          <ChargeLines price={custom} />
           <div className="pack-grid">
             {PACKS.map((pack) => (
               <article key={pack.coins} className={`panel pack ${pack.tone}`}>
                 <h3><Token size={22} /> {pack.coins} Coins</h3>
-                <button className="btn" type="button" disabled={buying} onClick={() => buy(pack.coins)}>${pack.price} PURCHASE</button>
+                <ChargeLines price={pack.price} />
+                <button className="btn" type="button" disabled={buying} onClick={() => buy(pack.coins)}>Purchase</button>
               </article>
             ))}
           </div>
-          <p className="muted">One coin is one US dollar. Checkout charges that amount, and the tokens are added after the payment is confirmed.</p>
+          <p className="muted">One coin is one pound. The account is credited the coin count only, after the payment is confirmed.</p>
         </div>
       )}
 
@@ -278,7 +490,7 @@ export function Wallet() {
               <label>Amount *
                 <span className="money">
                   <input type="number" min="15" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required />
-                  <b>USD</b>
+                  <b>£</b>
                 </span>
               </label>
               {method === 'crypto' && (
@@ -291,7 +503,7 @@ export function Wallet() {
               <input type="checkbox" checked={notify} onChange={(event) => setNotify(event.target.checked)} />
               I want to receive an email notification when the withdrawal is processed.
             </label>
-            <p className="receive">You receive <strong>{usd(withdrawValue)}</strong></p>
+            <p className="receive">You receive <strong>{gbp(withdrawValue)}</strong></p>
             <button className="btn" type="submit">Withdraw</button>
           </form>
           {!!withdrawals.length && (
@@ -375,7 +587,7 @@ export function Rewards() {
       <div className="wallet-grid">
         <article className="panel">
           <h2>Daily</h2>
-          <p>{me?.vip ? '3 tokens because you are VIP.' : '1.5 tokens. VIP lifts it to 3.'}</p>
+          <p>0.1 tokens.</p>
           <button className="btn" disabled={!me || !!left} onClick={async () => {
             if (!me) { setAuth('in'); return; }
             try {
@@ -390,14 +602,14 @@ export function Rewards() {
           {me ? (
             <>
               <p className="code">{me.referral}</p>
-              <p className="muted">{me.vip ? 'You and a new player each get 8 tokens.' : 'You and a new player each get 3. VIP lifts that to 8.'}</p>
+              <p className="muted">You and a new player each get 0.5 tokens.</p>
               <button className="btn ghost" onClick={() => { navigator.clipboard?.writeText(me.referral); toast('Code copied'); }}>Copy</button>
             </>
           ) : <button className="btn" onClick={() => setAuth('up')}>Register to get a code</button>}
         </article>
         <article className="panel">
           <h2>OG VIP</h2>
-          <p>30 tokens, 30 days. Gold frame, crown, 10 snipes, richer daily, bigger referrals.</p>
+          <p>30 days. Gold frame, crown, and 10 snipes.</p>
           <p className="muted">{me?.vip ? `Active until ${formatDate(me.vipUntil)}.` : 'Buy it in the shop.'}</p>
         </article>
       </div>

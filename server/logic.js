@@ -71,22 +71,64 @@ export function userDto(user, { self = false, online = false } = {}) {
           withdrawn: user.withdrawn || 0,
           dailyClaimedAt: user.dailyClaimedAt || 0,
           vipUntil: user.vipUntil || 0,
+          ownedAvatars: user.ownedAvatars || [],
+          ownedMarks: user.ownedMarks || [],
+          ownedColors: user.ownedColors || [],
         }
       : {}),
   };
 }
 
-function record(user) {
-  return {
-    wins: user.stats.wins,
-    losses: user.stats.losses,
-    matches: user.stats.matches,
-    streak: user.stats.streak,
-    bestStreak: user.stats.bestStreak,
-    earned: user.stats.earned,
-    bestScore: user.stats.bestScore,
-    winRate: winRate(user),
+function finishedRecord(state, userId) {
+  const seen = new Set();
+  let wins = 0;
+  let losses = 0;
+  const consider = (id, hostId, guestId, winnerId) => {
+    if (!id || !winnerId || seen.has(id)) return;
+    if (hostId !== userId && guestId !== userId) return;
+    seen.add(id);
+    if (winnerId === userId) wins += 1;
+    else losses += 1;
   };
+  for (const match of state.matches || []) {
+    if (match.status !== 'done') continue;
+    consider(match.id, match.hostId, match.guestId, match.winnerId);
+  }
+  for (const row of state.history || []) {
+    const players = row.players || [];
+    consider(row.id, players[0]?.id, players[1]?.id, row.winnerId);
+  }
+  return { matches: wins + losses, wins, losses };
+}
+
+function sparringTestUser(user) {
+  return !!(user && (user.sparring || String(user.username || '').toLowerCase() === 'sparring'));
+}
+
+export function sparringTestMatch(host, guest) {
+  return sparringTestUser(host) || sparringTestUser(guest);
+}
+
+function canSendForReview(match, host, guest) {
+  const reports = match.reports || {};
+  const conflict = match.status === 'result'
+    && !!reports[match.hostId]
+    && !!reports[match.guestId]
+    && reports[match.hostId] !== reports[match.guestId];
+  if (!conflict) return false;
+  if (sparringTestMatch(host, guest)) return true;
+  const clips = match.clips || {};
+  const bothClips = !!(clips[match.hostId] && clips[match.guestId]);
+  const unlocked = (match.voteUnlockAt || 0) > 0 && Date.now() >= match.voteUnlockAt;
+  const revotes = match.revotes || {};
+  const bothRevoted = !!(revotes[match.hostId] && revotes[match.guestId]);
+  return bothClips && unlocked && bothRevoted;
+}
+
+function clipBrief(match, userId) {
+  const clip = userId && match.clips && match.clips[userId];
+  if (!clip) return null;
+  return { name: clip.name, size: clip.size || 0, at: clip.at || 0 };
 }
 
 export function matchDto(state, match, viewerId) {
@@ -111,7 +153,7 @@ export function matchDto(state, match, viewerId) {
       discordUsername: user.discordUsername || null,
       discordName: discordName(user),
       discordAvatarUrl: discordAvatarUrl(user),
-      record: reveal(user.id) ? record(user) : null,
+      record: reveal(user.id) && user.id !== viewerId ? finishedRecord(state, user.id) : null,
     };
   };
   const live = match.status === 'live' || match.status === 'done';
@@ -127,7 +169,7 @@ export function matchDto(state, match, viewerId) {
     status: match.status,
     phase: listingPhase(match),
     project: match.project || 'Eon',
-    mode: match.mode || '1v1 Box Fight',
+    mode: match.mode || '1v1 Kill Race',
     region: match.region || 'EU',
     platform: match.platform || 'All',
     firstTo: match.firstTo || 1,
@@ -137,14 +179,27 @@ export function matchDto(state, match, viewerId) {
           id: row.id,
           text: row.text,
           at: row.at,
-          user: brief(state.users.find((item) => item.id === row.userId)),
+          system: !!row.system,
+          user: row.system ? null : brief(state.users.find((item) => item.id === row.userId)),
         }))
       : [],
+    clips: inRoom
+      ? {
+          host: clipBrief(match, match.hostId),
+          guest: clipBrief(match, match.guestId),
+        }
+      : null,
     report: inRoom
       ? {
           mine: reports[viewerId] || null,
           theirs: otherId ? reports[otherId] || null : null,
           conflict: !!(reports[match.hostId] && reports[match.guestId] && reports[match.hostId] !== reports[match.guestId]),
+          voteUnlockAt: match.voteUnlockAt || 0,
+          reportDeadline: match.reportDeadline || 0,
+          revoted: !!(match.revotes && match.revotes[viewerId]),
+          bothRevoted: !!(match.revotes && match.hostId && match.guestId && match.revotes[match.hostId] && match.revotes[match.guestId]),
+          reviewSent: !!(match.review && match.review.sent),
+          canReview: canSendForReview(match, host, guest),
         }
       : null,
     invitee: match.invitee,
@@ -263,13 +318,14 @@ export function ensureCups(state) {
     const eligible = cup.board
       .filter((row) => row.plays > 0)
       .sort((a, b) => b.points - a.points);
-    const cuts = [0.6, 0.25, 0.15];
+    const fixed = Array.isArray(cup.places) ? cup.places.map((amount) => round(amount)) : null;
+    const cuts = fixed || [0.6, 0.25, 0.15];
     let remaining = cup.prize;
     cuts.forEach((cut, index) => {
       const row = eligible[index];
       if (!row) return;
-      const amount = index === cuts.length - 1 ? round(remaining) : round(cup.prize * cut);
-      remaining = round(remaining - amount);
+      const amount = fixed ? round(cut) : index === cuts.length - 1 ? round(remaining) : round(cup.prize * cut);
+      if (!fixed) remaining = round(remaining - amount);
       const user = state.users.find((u) => u.id === row.userId);
       if (user && amount > 0) {
         credit(state, user, amount, 'tournament', { cup: cup.id, place: index + 1 });
@@ -383,9 +439,9 @@ export function freshMatch({
   practice = false,
   invitee = null,
   project = 'Eon',
-  mode = '1v1 Box Fight',
+  mode = '1v1 Kill Race',
   region = 'EU',
-  platform = 'All',
+  platform = 'PC',
   firstTo = 1,
 }) {
   const createdAt = Date.now();
@@ -406,6 +462,7 @@ export function freshMatch({
     expiresAt: createdAt + LISTING_MS,
     messages: [],
     reports: {},
+    reportDeadline: 0,
     startAt: 0,
     seed: 0,
     bot: null,
@@ -488,36 +545,296 @@ export function goLive(match) {
   if (match.guestId) match.scores[match.guestId] = 0;
 }
 
+const PORTRAIT_IDS = ['avatar-heat', 'avatar-frost', 'avatar-gold'];
+const MARK_IDS = ['avatar-retrac', 'avatar-eon'];
+const COLOR_IDS = { 'color-blue': 'blue', 'color-gold': 'gold' };
+
+function pushUnique(list, value) {
+  if (value && !list.includes(value)) list.push(value);
+}
+
+function revokedShop(user) {
+  if (!Array.isArray(user.revokedShop)) user.revokedShop = [];
+  return user.revokedShop;
+}
+
+function shopRevoked(user, itemId) {
+  return revokedShop(user).includes(itemId);
+}
+
+function forgetRevoke(user, itemId) {
+  user.revokedShop = revokedShop(user).filter((id) => id !== itemId);
+}
+
+export function ensureCosmetics(user) {
+  if (!Array.isArray(user.ownedAvatars)) user.ownedAvatars = [];
+  if (!Array.isArray(user.ownedMarks)) user.ownedMarks = [];
+  if (!Array.isArray(user.ownedColors)) user.ownedColors = [];
+  if (PORTRAIT_IDS.includes(user.avatar) && !shopRevoked(user, user.avatar)) pushUnique(user.ownedAvatars, user.avatar);
+  if (MARK_IDS.includes(user.avatar)) {
+    if (!shopRevoked(user, user.avatar)) {
+      pushUnique(user.ownedMarks, user.avatar);
+      if (!user.chatIcon || user.chatIcon === 'none') user.chatIcon = user.avatar;
+    }
+    user.avatar = 'default';
+  }
+  for (const id of MARK_IDS) {
+    if (user.ownedAvatars.includes(id) && !shopRevoked(user, id)) {
+      pushUnique(user.ownedMarks, id);
+      user.ownedAvatars = user.ownedAvatars.filter((item) => item !== id);
+    }
+  }
+  if (!user.chatIcon || user.chatIcon === 'flame' || user.chatIcon === 'crown' || !MARK_IDS.includes(user.chatIcon)) {
+    user.chatIcon = 'none';
+  }
+  if (user.nameColor === 'blue' && !shopRevoked(user, 'color-blue')) pushUnique(user.ownedColors, 'blue');
+  if (user.nameColor === 'gold' && !shopRevoked(user, 'color-gold')) pushUnique(user.ownedColors, 'gold');
+}
+
 export function buyItem(state, user, itemId) {
   const item = SHOP.find((entry) => entry.id === itemId);
   if (!item) fail(404, 'That item is not in the shop');
-  if (item.id.startsWith('avatar-') && user.avatar === item.id) fail(400, 'You already wear that portrait');
-  if (item.id === 'icon-flame' && user.chatIcon === 'flame') fail(400, 'Flame mark is already equipped');
-  if (item.id === 'icon-crown' && user.chatIcon === 'crown') fail(400, 'Crown mark is already equipped');
-  if (item.id === 'color-blue' && user.nameColor === 'blue') fail(400, 'Blue name is already equipped');
-  if (item.id === 'color-gold' && user.nameColor === 'gold') fail(400, 'Gold name is already equipped');
+  ensureCosmetics(user);
+  if (item.id === 'vip' && isVip(user)) fail(400, 'OG VIP is already active');
+  if (PORTRAIT_IDS.includes(item.id) && user.ownedAvatars.includes(item.id)) fail(400, 'You already own that portrait');
+  if (MARK_IDS.includes(item.id) && user.ownedMarks.includes(item.id)) fail(400, 'You already own that mark');
+  if (COLOR_IDS[item.id] && user.ownedColors.includes(COLOR_IDS[item.id])) fail(400, 'You already own that name color');
   debit(state, user, item.price, 'shop', { item: item.id });
+  forgetRevoke(user, item.id);
   if (item.id === 'vip') {
-    const base = Math.max(Date.now(), user.vipUntil || 0);
-    user.vipUntil = base + 30 * 86400000;
+    user.vipUntil = Date.now() + 30 * 86400000;
     user.snipes += 10;
-    if (!user.chatIcon || user.chatIcon === 'none') user.chatIcon = 'crown';
   } else if (item.id === 'snipes') user.snipes += 5;
   else if (item.id === 'shield') user.shields += 1;
-  else if (item.id.startsWith('avatar-')) user.avatar = item.id;
-  else if (item.id === 'icon-flame') user.chatIcon = 'flame';
-  else if (item.id === 'icon-crown') user.chatIcon = 'crown';
-  else if (item.id === 'color-blue') user.nameColor = 'blue';
-  else if (item.id === 'color-gold') user.nameColor = 'gold';
+  else if (PORTRAIT_IDS.includes(item.id)) {
+    pushUnique(user.ownedAvatars, item.id);
+    if (!user.avatar || user.avatar === 'default') user.avatar = item.id;
+  } else if (MARK_IDS.includes(item.id)) {
+    pushUnique(user.ownedMarks, item.id);
+    if (!user.chatIcon || user.chatIcon === 'none') user.chatIcon = item.id;
+  } else if (COLOR_IDS[item.id]) {
+    const color = COLOR_IDS[item.id];
+    pushUnique(user.ownedColors, color);
+    if (!user.nameColor || user.nameColor === 'default') user.nameColor = color;
+  }
   return item;
+}
+
+export function equipCosmetic(user, slot, id) {
+  ensureCosmetics(user);
+  if (slot === 'avatar') {
+    if (!user.ownedAvatars.includes(id)) fail(400, 'You do not own that portrait');
+    user.avatar = id;
+    return;
+  }
+  if (slot === 'mark') {
+    if (!user.ownedMarks.includes(id)) fail(400, 'You do not own that mark');
+    user.chatIcon = id;
+    return;
+  }
+  if (slot === 'color') {
+    if (!user.ownedColors.includes(id)) fail(400, 'You do not own that name color');
+    user.nameColor = id;
+    return;
+  }
+  fail(400, 'Unknown cosmetic slot');
+}
+
+const PORTRAIT_NAMES = {
+  'avatar-heat': 'Heat portrait',
+  'avatar-frost': 'Frost portrait',
+  'avatar-gold': 'Gold portrait',
+};
+const MARK_NAMES = {
+  'avatar-retrac': 'Retrac',
+  'avatar-eon': 'Eon',
+};
+const COLOR_NAMES = { blue: 'Blue name', gold: 'Gold name' };
+
+export function inventoryItems(user) {
+  ensureCosmetics(user);
+  const items = [];
+  if (isVip(user)) {
+    const days = Math.max(1, Math.ceil((user.vipUntil - Date.now()) / 86400000));
+    items.push({
+      key: 'vip',
+      label: 'OG VIP',
+      detail: `${days} day${days === 1 ? '' : 's'} left`,
+      button: 'Remove VIP',
+    });
+  }
+  if ((user.snipes || 0) > 0) {
+    items.push({
+      key: 'snipes',
+      label: 'Snipes',
+      detail: `${user.snipes} remaining`,
+      button: 'Remove snipes',
+    });
+  }
+  if ((user.shields || 0) > 0) {
+    items.push({
+      key: 'shield',
+      label: 'Streak shields',
+      detail: String(user.shields),
+      button: 'Remove streak shield',
+    });
+  }
+  for (const id of user.ownedAvatars) {
+    const name = PORTRAIT_NAMES[id];
+    if (!name) continue;
+    const short = name.replace(' portrait', '');
+    items.push({
+      key: id,
+      label: name,
+      detail: user.avatar === id ? 'Equipped' : 'Owned',
+      button: name.includes('portrait') ? `Remove ${short} portrait` : `Remove ${name}`,
+    });
+  }
+  for (const id of user.ownedMarks) {
+    const name = MARK_NAMES[id];
+    if (!name) continue;
+    items.push({
+      key: id,
+      label: name,
+      detail: user.chatIcon === id ? 'Equipped' : 'Owned',
+      button: `Remove ${name}`,
+    });
+  }
+  for (const id of user.ownedColors) {
+    const name = COLOR_NAMES[id];
+    if (!name) continue;
+    items.push({
+      key: id,
+      label: name,
+      detail: user.nameColor === id ? 'Equipped' : 'Owned',
+      button: `Remove ${name}`,
+    });
+  }
+  return items;
+}
+
+export const INVENTORY_GRANTS = [
+  { key: 'avatar-heat', label: 'Heat portrait' },
+  { key: 'avatar-frost', label: 'Frost portrait' },
+  { key: 'avatar-gold', label: 'Gold portrait' },
+  { key: 'avatar-retrac', label: 'Retrac' },
+  { key: 'avatar-eon', label: 'Eon' },
+  { key: 'blue', label: 'Blue name' },
+  { key: 'gold', label: 'Gold name' },
+  { key: 'snipes', label: 'Snipe (+5)' },
+  { key: 'shield', label: 'Streak shield (+1)' },
+  { key: 'vip', label: 'OG VIP (30 days)' },
+];
+
+export function grantsAvailable(user) {
+  ensureCosmetics(user);
+  return INVENTORY_GRANTS.filter((grant) => {
+    if (grant.key === 'snipes' || grant.key === 'shield') return true;
+    if (grant.key === 'vip') return !isVip(user);
+    if (PORTRAIT_IDS.includes(grant.key)) return !user.ownedAvatars.includes(grant.key);
+    if (MARK_IDS.includes(grant.key)) return !user.ownedMarks.includes(grant.key);
+    if (grant.key === 'blue' || grant.key === 'gold') return !user.ownedColors.includes(grant.key);
+    return false;
+  });
+}
+
+export function grantInventoryItem(user, key) {
+  ensureCosmetics(user);
+  if (key === 'vip') {
+    if (isVip(user)) return false;
+    user.vipUntil = Date.now() + 30 * 86400000;
+    return true;
+  }
+  if (key === 'snipes') {
+    user.snipes = (user.snipes || 0) + 5;
+    return true;
+  }
+  if (key === 'shield') {
+    user.shields = (user.shields || 0) + 1;
+    return true;
+  }
+  if (PORTRAIT_IDS.includes(key)) {
+    if (user.ownedAvatars.includes(key)) return false;
+    forgetRevoke(user, key);
+    pushUnique(user.ownedAvatars, key);
+    if (!user.avatar || user.avatar === 'default') user.avatar = key;
+    return true;
+  }
+  if (MARK_IDS.includes(key)) {
+    if (user.ownedMarks.includes(key)) return false;
+    forgetRevoke(user, key);
+    pushUnique(user.ownedMarks, key);
+    if (!user.chatIcon || user.chatIcon === 'none') user.chatIcon = key;
+    return true;
+  }
+  if (key === 'blue' || key === 'gold') {
+    if (user.ownedColors.includes(key)) return false;
+    forgetRevoke(user, key === 'blue' ? 'color-blue' : 'color-gold');
+    pushUnique(user.ownedColors, key);
+    if (!user.nameColor || user.nameColor === 'default') user.nameColor = key;
+    return true;
+  }
+  fail(400, 'That item cannot be added');
+}
+
+export function removeInventoryItem(user, key) {
+  ensureCosmetics(user);
+  if (key === 'vip') {
+    user.vipUntil = 0;
+    return;
+  }
+  if (key === 'snipes') {
+    user.snipes = 0;
+    return;
+  }
+  if (key === 'shield') {
+    user.shields = 0;
+    return;
+  }
+  if (PORTRAIT_IDS.includes(key)) {
+    user.ownedAvatars = user.ownedAvatars.filter((id) => id !== key);
+    if (user.avatar === key) user.avatar = 'default';
+    pushUnique(revokedShop(user), key);
+    return;
+  }
+  if (MARK_IDS.includes(key)) {
+    user.ownedMarks = user.ownedMarks.filter((id) => id !== key);
+    if (user.chatIcon === key) user.chatIcon = 'none';
+    pushUnique(revokedShop(user), key);
+    return;
+  }
+  if (key === 'blue' || key === 'gold') {
+    user.ownedColors = user.ownedColors.filter((id) => id !== key);
+    if (user.nameColor === key) user.nameColor = 'default';
+    pushUnique(revokedShop(user), key === 'blue' ? 'color-blue' : 'color-gold');
+    return;
+  }
+  fail(400, 'That item is not in this inventory');
+}
+
+export function unequipCosmetic(user, slot) {
+  ensureCosmetics(user);
+  if (slot === 'avatar') {
+    user.avatar = 'default';
+    return;
+  }
+  if (slot === 'mark') {
+    user.chatIcon = 'none';
+    return;
+  }
+  if (slot === 'color') {
+    user.nameColor = 'default';
+    return;
+  }
+  fail(400, 'Unknown cosmetic slot');
 }
 
 export function blocked(user) {
   return user && user.excludedUntil > Date.now();
 }
 
-export function referralBonus(user) {
-  return isVip(user) ? 8 : 3;
+export function referralBonus() {
+  return 0.5;
 }
 
 export const PACKS = [
@@ -528,6 +845,12 @@ export const PACKS = [
   { coins: 25, price: 25 },
   { coins: 50, price: 50 },
 ];
+
+export const PURCHASE_TAX_PENCE = 230;
+
+export function chargePence(tokens) {
+  return Math.round(tokens * 100) + PURCHASE_TAX_PENCE;
+}
 
 export const CRYPTO_NETWORKS = ['Solana', 'Ethereum', 'Bitcoin'];
 export const MIN_WITHDRAW = 15;
@@ -575,38 +898,11 @@ export function walletSnapshot(state, user) {
   };
 }
 
-function applyReferral(state, user, code) {
-  const referral = String(code || '').trim();
-  if (!referral) return { applied: false };
-  if (user.referral.toLowerCase() === referral.toLowerCase()) fail(400, 'You cannot use your own referral code');
-  const host = state.users.find((item) => !item.npc && item.referral.toLowerCase() === referral.toLowerCase() && item.id !== user.id);
-  if (!host) fail(400, 'That referral code is not on this server');
-  const already = user.referredBy || state.txs.some((tx) => tx.userId === user.id && tx.type === 'referral' && tx.amount > 0);
-  if (already) return { applied: false, already: true, host: host.username };
-  const bonus = referralBonus(host);
-  credit(state, user, bonus, 'referral', { from: host.username });
-  credit(state, host, bonus, 'referral', { from: user.username });
-  user.referredBy = host.id;
-  return { applied: true, bonus, host: host.username };
-}
-
 export function purchaseAmount(raw) {
   const amount = cashAmount(raw, 'a purchase amount');
   if (amount < 1) fail(400, 'Minimum purchase is 1');
   if (amount > 1000) fail(400, 'Maximum purchase is 1000');
   return amount;
-}
-
-export function assertReferralCode(state, user, code) {
-  const referral = String(code || '').trim();
-  if (!referral) return '';
-  if (referral.length > 32) fail(400, 'That referral code is not on this server');
-  if (user.referral.toLowerCase() === referral.toLowerCase()) fail(400, 'You cannot use your own referral code');
-  const host = state.users.find(
-    (item) => !item.npc && item.referral.toLowerCase() === referral.toLowerCase() && item.id !== user.id
-  );
-  if (!host) fail(400, 'That referral code is not on this server');
-  return referral;
 }
 
 export function creditPaidCheckout(state, session) {
@@ -615,8 +911,8 @@ export function creditPaidCheckout(state, session) {
   if (!sessionId.startsWith('cs_')) fail(400, 'Missing checkout session');
   const userId = String(session.metadata?.userId || session.client_reference_id || '');
   const tokens = purchaseAmount(session.metadata?.tokens);
-  const expected = Math.round(tokens * 100);
-  if (session.currency !== 'usd' || Number(session.amount_total) !== expected) {
+  const expected = chargePence(tokens);
+  if (session.currency !== 'gbp' || Number(session.amount_total) !== expected) {
     fail(400, 'Paid amount does not match the token pack');
   }
   if (!Array.isArray(state.paidCheckouts)) state.paidCheckouts = [];
@@ -626,19 +922,10 @@ export function creditPaidCheckout(state, session) {
   if (already) return { duplicate: true, credited: 0 };
   const user = state.users.find((item) => item.id === userId && !item.npc);
   if (!user) fail(404, 'That player is no longer on the server');
-  const referral = String(session.metadata?.referral || '').trim();
-  let referralResult = { applied: false };
-  if (referral) {
-    try {
-      referralResult = applyReferral(state, user, referral);
-    } catch {
-      referralResult = { applied: false };
-    }
-  }
   credit(state, user, tokens, 'deposit', { price: tokens, sessionId, provider: 'stripe' });
   state.paidCheckouts.push(sessionId);
   if (state.paidCheckouts.length > 500) state.paidCheckouts.splice(0, state.paidCheckouts.length - 500);
-  return { credited: tokens, duplicate: false, referral: referralResult };
+  return { credited: tokens, duplicate: false };
 }
 
 function withdrawalDestination(method, body) {

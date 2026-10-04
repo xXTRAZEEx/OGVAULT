@@ -2,21 +2,25 @@ import './env.js';
 import http from 'http';
 import path from 'path';
 import express from 'express';
+import busboy from 'busboy';
 import { WebSocketServer } from 'ws';
 import crypto from 'crypto';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { DURATION, GOOD, buildChart, judge, scoreTimeline } from '../shared/chart.js';
-import { FIRST_TO, MODES, PLATFORMS, PROJECTS, REGIONS } from '../shared/listings.js';
+import { LISTING_MS, MODES, PLATFORMS, PROJECTS, REGIONS, parseEntry } from '../shared/listings.js';
 import { calendarWindow, safeTimeZone } from '../shared/time.js';
 import {
   buyItem,
+  equipCosmetic,
+  unequipCosmetic,
   credit,
   debit,
   ensureCups,
   ensurePotw,
   freshMatch,
   matchDto,
+  sparringTestMatch,
   POTW_PRIZES,
   potwLeaders,
   potwWindow,
@@ -24,7 +28,6 @@ import {
   resolveMatch,
   settleAgreed,
   sendTip,
-  assertReferralCode,
   purchaseAmount,
   requestWithdrawal,
   settleWithdrawals,
@@ -32,8 +35,9 @@ import {
   userDto,
   walletSnapshot,
 } from './logic.js';
-import { SHOP, WELCOME, fail, isVip, load, rid, round, update } from './store.js';
+import { SHOP, fail, load, rid, round, update } from './store.js';
 import { checkoutOrigin, createCoinCheckout, handleStripeWebhook } from './checkout.js';
+import { sendClipReview, setReviewSettleHook, startDiscordAdmin } from './discordAdmin.js';
 import {
   consumeDiscordState,
   createDiscordState,
@@ -45,6 +49,8 @@ import {
   discordName,
   discordRedirectUri,
   fetchDiscordIdentity,
+  discordAllowsButtonUrl,
+  reviewSiteOrigins,
 } from './discord.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -137,6 +143,90 @@ function requireUser(req) {
   return user;
 }
 
+const CLIP_BYTES = 500 * 1024 * 1024;
+
+function userFromToken(token) {
+  if (!token) return null;
+  const state = load();
+  const userId = state.sessions[token];
+  if (!userId) return null;
+  return state.users.find((user) => user.id === userId) || null;
+}
+
+function reportsConflict(match) {
+  const reports = match.reports || {};
+  return match.status === 'result'
+    && !!reports[match.hostId]
+    && !!reports[match.guestId]
+    && reports[match.hostId] !== reports[match.guestId];
+}
+
+const VOTE_LOCK_MS = 2 * 60 * 1000;
+
+function bothClipsIn(match) {
+  const clips = match.clips || {};
+  return !!(match.hostId && match.guestId && clips[match.hostId] && clips[match.guestId]);
+}
+
+function sameToken(a, b) {
+  const left = Buffer.from(String(a || ''));
+  const right = Buffer.from(String(b || ''));
+  if (!left.length || left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+}
+
+function reviewTokens(match) {
+  const review = match.review || {};
+  return [review.footage, review.host, review.guest].filter(Boolean);
+}
+
+function clipAuthorized(match, reviewToken) {
+  return reviewTokens(match).some((token) => sameToken(token, reviewToken));
+}
+
+function htmlEscape(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function claimName(match, host, guest, userId) {
+  if (userId === host.id) return host.username;
+  if (userId === guest.id) return guest.username;
+  return 'unknown';
+}
+
+function clipFile(matchId, userId) {
+  return path.join(__dirname, 'uploads', matchId, `${userId}.mp4`);
+}
+
+function safeClipName(name) {
+  const base = path.basename(String(name || 'clip.mp4')).replace(/[^\w.\- ()]/g, '').slice(0, 80);
+  return base.toLowerCase().endsWith('.mp4') ? base : 'clip.mp4';
+}
+
+function pushMatchLine(match, text) {
+  match.messages = match.messages || [];
+  const row = { id: rid('mc'), system: true, text, at: Date.now() };
+  match.messages.push(row);
+  if (match.messages.length > 80) match.messages.splice(0, match.messages.length - 80);
+  return {
+    matchId: match.id,
+    message: { id: row.id, text: row.text, at: row.at, system: true, user: null },
+    to: [match.hostId, match.guestId].filter(Boolean),
+  };
+}
+
+function deliverMatchLine(delivered) {
+  if (!delivered) return;
+  for (const sock of sockets) {
+    if (!delivered.to.includes(sock.userId)) continue;
+    send(sock, { type: 'matchchat', matchId: delivered.matchId, message: delivered.message });
+  }
+}
+
 function requestZone(req) {
   return safeTimeZone(req.query.tz);
 }
@@ -145,6 +235,8 @@ function tickEconomy(state, timeZone) {
   const potw = ensurePotw(state, timeZone);
   const cups = ensureCups(state);
   const finished = [];
+  closeFinishedMatches(state);
+  const notes = settleSilentReports(state);
   finished.push(...expireListings(state));
   for (const match of state.matches) {
     if (match.status === 'live' && match.startAt && Date.now() >= match.startAt + DURATION + 1200) {
@@ -152,7 +244,7 @@ function tickEconomy(state, timeZone) {
       finished.push(match.id);
     }
   }
-  return { potw, cups, finished };
+  return { potw, cups, finished, notes };
 }
 
 function homePayload(viewer, timeZone) {
@@ -214,6 +306,8 @@ function cupSummary(state, cup) {
     blurb: cup.blurb,
     entry: cup.entry,
     prize: cup.prize,
+    places: Array.isArray(cup.places) ? cup.places : null,
+    maxPlayers: cup.maxPlayers || 0,
     endsAt: cup.endsAt,
     paidOut: cup.paidOut,
     players: cup.board.length,
@@ -221,12 +315,103 @@ function cupSummary(state, cup) {
   };
 }
 
-function busy(state, userId) {
-  return state.matches.some(
-    (match) =>
-      ['live', 'playing', 'result'].includes(match.status) &&
-      (match.hostId === userId || match.guestId === userId)
+const TERMINAL_MATCH = new Set(['done', 'completed', 'cancelled', 'expired']);
+const LIVE_MATCH = new Set(['open', 'staging', 'playing', 'live', 'result', 'dispute']);
+
+function paidOrRefunded(state, match, userId) {
+  if (!userId) return false;
+  return (state.txs || []).some((row) =>
+    row.userId === userId
+    && row.meta
+    && row.meta.match === match.id
+    && (row.type === 'refund' || row.type === 'win')
+    && row.amount > 0
   );
+}
+
+const REPORT_WAIT_MS = 2 * 60 * 1000;
+
+function soleReport(match) {
+  const reports = match.reports || {};
+  const hostVote = match.hostId ? reports[match.hostId] : null;
+  const guestVote = match.guestId ? reports[match.guestId] : null;
+  if (hostVote && guestVote) return null;
+  return hostVote || guestVote || null;
+}
+
+function armReportDeadline(match) {
+  if (!['playing', 'result'].includes(match.status)) return;
+  if (match.reportDeadline) return;
+  if (!soleReport(match)) return;
+  match.reportDeadline = Date.now() + REPORT_WAIT_MS;
+}
+
+function settleSilentReports(state) {
+  const notes = [];
+  for (const match of state.matches) {
+    if (!['playing', 'result'].includes(match.status)) continue;
+    if (match.winnerId) continue;
+    const winnerId = soleReport(match);
+    if (!winnerId) continue;
+    if (!match.reportDeadline) {
+      match.reportDeadline = Date.now() + REPORT_WAIT_MS;
+      continue;
+    }
+    if (Date.now() < match.reportDeadline) continue;
+    settleAgreed(state, match, winnerId);
+    notes.push(pushMatchLine(match, 'The report timer ran out. The first report stands.'));
+  }
+  return notes;
+}
+
+function reportsAgree(match) {
+  const reports = match.reports || {};
+  return !!(match.hostId && match.guestId
+    && reports[match.hostId]
+    && reports[match.guestId]
+    && reports[match.hostId] === reports[match.guestId]);
+}
+
+function refundEntryOnce(state, match, userId) {
+  if (!userId || match.practice || !(match.entry > 0)) return;
+  if (match.winnerId || match.payout > 0) return;
+  if (paidOrRefunded(state, match, userId)) return;
+  const person = state.users.find((user) => user.id === userId);
+  if (!person) return;
+  credit(state, person, match.entry, 'refund', { match: match.id });
+}
+
+function closeFinishedMatches(state) {
+  for (const match of state.matches) {
+    if (TERMINAL_MATCH.has(match.status)) continue;
+    if (match.winnerId || match.payout > 0) {
+      match.status = 'done';
+      continue;
+    }
+    if (!reportsAgree(match)) continue;
+    const paid = (state.txs || []).some((row) => row.meta && row.meta.match === match.id && row.type === 'win' && row.amount > 0);
+    if (paid) match.status = 'done';
+    else settleAgreed(state, match, match.reports[match.hostId]);
+  }
+}
+
+function matchInProgress(state, match) {
+  if (TERMINAL_MATCH.has(match.status)) return false;
+  if (match.winnerId || match.payout > 0) return false;
+  if (reportsAgree(match)) return false;
+  if (['open', 'staging'].includes(match.status) && match.expiresAt && Date.now() >= match.expiresAt) return false;
+  return LIVE_MATCH.has(match.status);
+}
+
+function activeMatch(state, userId) {
+  return state.matches.find((match) => {
+    if (match.hostId !== userId && match.guestId !== userId) return false;
+    return matchInProgress(state, match);
+  }) || null;
+}
+
+function busy(state, userId) {
+  return !!activeMatch(state, userId);
 }
 
 function expireListings(state) {
@@ -248,7 +433,19 @@ function expireListings(state) {
   return finished;
 }
 
-function assertPlay() {}
+function assertAccountOpen(user) {
+  if (user && user.banUntil > Date.now()) fail(403, 'This account is banned');
+}
+
+function assertMatchmakingOpen(state) {
+  if ((state.matchmakingDisabledUntil || 0) > Date.now()) {
+    fail(403, 'Matchmaking is turned off');
+  }
+}
+
+function assertPlay(user) {
+  assertAccountOpen(user);
+}
 
 app.get('/api/health', route((_req, res) => res.json({ ok: true })));
 
@@ -302,7 +499,6 @@ app.post(
         stats: { earned: 0, wins: 0, losses: 0, matches: 0, streak: 0, bestStreak: 0, bestScore: 0 },
       };
       state.users.push(user);
-      credit(state, user, WELCOME, 'welcome', {});
       if (referral) {
         const host = state.users.find((item) => item.referral.toLowerCase() === referral.toLowerCase() && item.id !== user.id);
         if (host) {
@@ -329,6 +525,7 @@ app.post(
         (item) => !item.npc && (item.email === login || item.username.toLowerCase() === login)
       );
       if (!user || !checkPw(password, user.password)) fail(401, 'Email or password is wrong');
+      if (user.banUntil > Date.now()) fail(403, 'This account is banned');
       const token = crypto.randomBytes(24).toString('hex');
       state.sessions[token] = user.id;
       return { token, user: userDto(user, { self: true, online: true }) };
@@ -389,8 +586,8 @@ function acceptDiscord(state, profile) {
       discordGlobalName: profile.globalName,
     };
     state.users.push(user);
-    credit(state, user, WELCOME, 'welcome', {});
   }
+  if (user.banUntil > Date.now()) return { banned: true };
   const token = crypto.randomBytes(24).toString('hex');
   state.sessions[token] = user.id;
   return { token, created };
@@ -451,6 +648,10 @@ app.get(
       }
       const profile = await fetchDiscordIdentity(code);
       const result = update((draft) => acceptDiscord(draft, profile));
+      if (result.banned) {
+        discordReturn(res, { discord_error: 'This account is banned' });
+        return;
+      }
       discordReturn(res, {
         discord_token: result.token,
         discord_new: result.created ? '1' : '0',
@@ -478,8 +679,13 @@ app.get(
   '/api/me',
   route((req, res) => {
     const user = requireUser(req);
-    const fresh = load().users.find((item) => item.id === user.id);
-    res.json({ user: userDto(fresh, { self: true, online: true }) });
+    const state = load();
+    const fresh = state.users.find((item) => item.id === user.id);
+    const match = activeMatch(state, user.id);
+    res.json({
+      user: userDto(fresh, { self: true, online: true }),
+      activeMatchId: match ? match.id : null,
+    });
   })
 );
 
@@ -613,10 +819,39 @@ app.post(
       const cup = state.tournaments.find((item) => item.id === req.params.id);
       if (!cup) fail(404, 'Cup not found');
       if (cup.paidOut || Date.now() > cup.endsAt) fail(400, 'That cup is closed');
+      if (cup.maxPlayers && cup.board.length >= cup.maxPlayers) fail(400, 'That cup is full');
       if (cup.board.some((row) => row.userId === user.id)) fail(400, 'You are already in');
       if (cup.entry > 0) debit(state, user, cup.entry, 'entry', { cup: cup.id });
-      cup.prize = round(cup.prize + cup.entry);
+      if (!Array.isArray(cup.places)) cup.prize = round(cup.prize + cup.entry);
       cup.board.push({ userId: user.id, points: 0, plays: 0 });
+      return { tournament: cupSummary(state, cup), user: userDto(user, { self: true }) };
+    });
+    pingLobby();
+    res.json(result);
+  })
+);
+
+app.post(
+  '/api/tournaments/:id/leave',
+  route((req, res) => {
+    const me = requireUser(req);
+    const result = update((state) => {
+      ensureCups(state);
+      const user = state.users.find((item) => item.id === me.id);
+      const cup = state.tournaments.find((item) => item.id === req.params.id);
+      if (!cup) fail(404, 'Cup not found');
+      if (cup.paidOut || Date.now() > cup.endsAt) fail(400, 'That cup is closed');
+      const row = cup.board.find((item) => item.userId === user.id);
+      if (!row) fail(400, 'You are not in this cup');
+      if (cup.entry > 0) {
+        const paid = (state.txs || []).find((tx) => tx.userId === user.id && tx.type === 'entry' && tx.meta?.cup === cup.id && tx.amount < 0);
+        const refunded = (state.txs || []).find((tx) => tx.userId === user.id && tx.type === 'refund' && tx.meta?.cup === cup.id && tx.amount > 0);
+        if (paid && (!refunded || refunded.at < paid.at)) {
+          credit(state, user, cup.entry, 'refund', { cup: cup.id });
+          if (!Array.isArray(cup.places)) cup.prize = round(Math.max(0, cup.prize - cup.entry));
+        }
+      }
+      cup.board = cup.board.filter((item) => item.userId !== user.id);
       return { tournament: cupSummary(state, cup), user: userDto(user, { self: true }) };
     });
     pingLobby();
@@ -641,12 +876,19 @@ app.get(
 app.get(
   '/api/matches/:id',
   route((req, res) => {
-    const changed = update((state) => tickEconomy(state).finished);
+    const changed = update((state) => {
+      const tick = tickEconomy(state);
+      return { finished: tick.finished, notes: tick.notes || [] };
+    });
     const state = load();
     const match = state.matches.find((item) => item.id === req.params.id);
     if (!match) fail(404, 'Match not found');
     const viewer = currentUser(req);
-    if (changed.length) pingLobby();
+    for (const note of changed.notes) {
+      deliverMatchLine(note);
+      pingMatch(note.matchId);
+    }
+    if (changed.finished.length || changed.notes.length) pingLobby();
     res.json({ match: matchDto(state, match, viewer?.id) });
   })
 );
@@ -657,32 +899,28 @@ app.post(
     const me = requireUser(req);
     assertPlay(me);
     const practice = !!req.body.practice;
-    const entry = practice ? 0 : round(req.body.entry);
-    const opponent = String(req.body.opponent || '').trim();
+    const entry = practice ? 0 : parseEntry(req.body.entry);
     const project = PROJECTS.includes(req.body.project) ? req.body.project : 'Eon';
-    const mode = MODES.includes(req.body.mode) ? req.body.mode : '1v1 Box Fight';
-    const region = REGIONS.includes(req.body.region) ? req.body.region : 'EU';
-    const platform = PLATFORMS.includes(req.body.platform) ? req.body.platform : 'All';
-    const firstTo = FIRST_TO.includes(Number(req.body.firstTo)) ? Number(req.body.firstTo) : 1;
-    if (!practice && (!entry || entry < 0.5 || entry > 100)) fail(400, 'Entry is between 0.5 and 100 tokens');
+    if (!MODES.includes(req.body.mode)) fail(400, 'Mode must be 1v1 Kill Race');
+    if (!REGIONS.includes(req.body.region)) fail(400, 'Region must be EU or NA');
+    const mode = req.body.mode;
+    const region = req.body.region;
+    const platform = PLATFORMS.includes(req.body.platform) ? req.body.platform : 'PC';
+    const firstTo = 1;
+    if (!practice && entry == null) fail(400, 'Entry must be at least 1 token');
     const result = update((state) => {
+      assertMatchmakingOpen(state);
       const user = state.users.find((item) => item.id === me.id);
+      assertAccountOpen(user);
       if (busy(state, user.id)) fail(400, 'Finish your open 1v1 before joining another');
       const openCount = state.matches.filter(
         (match) =>
           match.hostId === user.id && ['open', 'staging', 'live', 'playing', 'result'].includes(match.status)
       ).length;
       if (openCount >= 3) fail(400, 'You already have three tables open');
-      let invitee = null;
-      if (opponent) {
-        const other = state.users.find((item) => item.username.toLowerCase() === opponent.toLowerCase());
-        if (!other) fail(404, 'No player by that name');
-        if (other.id === user.id) fail(400, 'You cannot challenge yourself');
-        invitee = other.username;
-      }
       if (practice) fail(400, 'Open a real listing');
       debit(state, user, entry, 'entry', {});
-      const match = freshMatch({ host: user, entry, invitee, project, mode, region, platform, firstTo });
+      const match = freshMatch({ host: user, entry, project, mode, region, platform, firstTo });
       state.matches.unshift(match);
       return { match: matchDto(state, match, user.id), user: userDto(user, { self: true }) };
     });
@@ -697,7 +935,9 @@ app.post(
     const me = requireUser(req);
     assertPlay(me);
     const result = update((state) => {
+      assertMatchmakingOpen(state);
       const user = state.users.find((item) => item.id === me.id);
+      assertAccountOpen(user);
       if (busy(state, user.id)) fail(400, 'Finish your open 1v1 before joining another');
       const table = state.matches.find(
         (match) =>
@@ -710,9 +950,9 @@ app.post(
       if (table) {
         return joinMatch(state, table, user);
       }
-      if (user.balance >= 0.5) {
-        debit(state, user, 0.5, 'entry', {});
-        const match = freshMatch({ host: user, entry: 0.5 });
+      if (user.balance >= 1) {
+        debit(state, user, 1, 'entry', {});
+        const match = freshMatch({ host: user, entry: 1, mode: MODES[0], region: 'EU', firstTo: 1 });
         state.matches.unshift(match);
         return { match: matchDto(state, match, user.id), user: userDto(user, { self: true }) };
       }
@@ -734,7 +974,121 @@ function joinMatch(state, match, user) {
   match.status = 'staging';
   match.guestReady = false;
   match.hostReady = false;
+  const host = state.users.find((item) => item.id === match.hostId);
+  if (host?.sparring) match.hostReady = true;
   return { match: matchDto(state, match, user.id), user: userDto(user, { self: true }) };
+}
+
+const SPARRING_NAME = 'sparring';
+const SPARRING_ENTRY = 1;
+
+function ensureSparringListing(state) {
+  let user = state.users.find((item) => item.username.toLowerCase() === SPARRING_NAME);
+  if (!user) {
+    user = {
+      id: rid('u'),
+      username: SPARRING_NAME,
+      npc: false,
+      sparring: true,
+      email: 'sparring@ogvault.test',
+      password: hashPw('sparring1'),
+      balance: 25,
+      vipUntil: 0,
+      referral: 'SPARRING',
+      avatar: 'default',
+      chatIcon: 'none',
+      nameColor: 'default',
+      snipes: 0,
+      shields: 0,
+      excludedUntil: 0,
+      withdrawn: 0,
+      dailyClaimedAt: 0,
+      createdAt: Date.now(),
+      usernameHistory: [],
+      friends: [],
+      skill: 0,
+      stats: { earned: 0, wins: 0, losses: 0, matches: 0, streak: 0, bestStreak: 0, bestScore: 0 },
+    };
+    state.users.push(user);
+  } else if (!user.sparring) {
+    user.sparring = true;
+  }
+  const open = state.matches.find(
+    (match) => match.hostId === user.id && match.status === 'open' && !match.invitee
+  );
+  if (open) {
+    open.expiresAt = Date.now() + LISTING_MS;
+    return;
+  }
+  const occupied = state.matches.some((match) =>
+    (match.hostId === user.id || match.guestId === user.id) && matchInProgress(state, match)
+  );
+  if (occupied) return;
+  if (user.balance < SPARRING_ENTRY) credit(state, user, 25, 'adjust', { note: 'sparring' });
+  const match = freshMatch({
+    host: user,
+    entry: SPARRING_ENTRY,
+    project: 'Eon',
+    mode: MODES[0],
+    region: 'EU',
+    platform: PLATFORMS[0],
+    firstTo: 1,
+  });
+  debit(state, user, SPARRING_ENTRY, 'entry', { match: match.id });
+  state.matches.unshift(match);
+}
+
+function releaseSupersededSparring(state) {
+  const bot = state.users.find(
+    (item) => item.sparring || item.username.toLowerCase() === SPARRING_NAME
+  );
+  if (!bot) return;
+  const hasOpen = state.matches.some(
+    (match) => match.hostId === bot.id && match.status === 'open' && !match.invitee && !match.guestId
+  );
+  if (!hasOpen) return;
+  for (const match of state.matches) {
+    if (match.hostId !== bot.id && match.guestId !== bot.id) continue;
+    if (match.status === 'open' && !match.guestId) continue;
+    if (match.winnerId || match.payout > 0 || reportsAgree(match)) {
+      if (!TERMINAL_MATCH.has(match.status)) match.status = 'done';
+      continue;
+    }
+    if (match.status !== 'staging') continue;
+    refundEntryOnce(state, match, match.hostId);
+    refundEntryOnce(state, match, match.guestId);
+    match.status = 'cancelled';
+    match.hostReady = false;
+    match.guestReady = false;
+  }
+}
+
+function sparringCastWin(state) {
+  const bot = state.users.find(
+    (item) => item.sparring || item.username.toLowerCase() === SPARRING_NAME
+  );
+  if (!bot) return [];
+  const notes = [];
+  for (const match of state.matches) {
+    if (!['playing', 'result'].includes(match.status)) continue;
+    if (match.hostId !== bot.id && match.guestId !== bot.id) continue;
+    if (!match.hostId || !match.guestId) continue;
+    match.reports = match.reports || {};
+    if (match.reports[bot.id]) continue;
+    const host = state.users.find((item) => item.id === match.hostId);
+    const guest = state.users.find((item) => item.id === match.guestId);
+    if (!host || !guest) continue;
+    match.reports[bot.id] = bot.id;
+    if (match.reports[host.id] && match.reports[guest.id]) {
+      if (match.reports[host.id] === match.reports[guest.id]) settleAgreed(state, match, match.reports[host.id]);
+      else match.status = 'result';
+    } else {
+      match.status = 'result';
+      armReportDeadline(match);
+    }
+    notes.push(pushMatchLine(match, `${bot.username} reported they won`));
+  }
+  return notes;
 }
 
 app.post(
@@ -743,7 +1097,9 @@ app.post(
     const me = requireUser(req);
     assertPlay(me);
     const result = update((state) => {
+      assertMatchmakingOpen(state);
       const user = state.users.find((item) => item.id === me.id);
+      assertAccountOpen(user);
       if (busy(state, user.id)) fail(400, 'Finish your open 1v1 before joining another');
       const match = state.matches.find((item) => item.id === req.params.id);
       if (!match) fail(404, 'Match not found');
@@ -825,15 +1181,17 @@ app.post(
       const user = state.users.find((item) => item.id === me.id);
       const match = state.matches.find((item) => item.id === req.params.id);
       if (!match) fail(404, 'Match not found');
-      if (!['live', 'playing', 'result'].includes(match.status)) fail(400, 'This 1v1 is not in progress');
+      if (!['staging', 'live', 'playing', 'result', 'dispute'].includes(match.status)) fail(400, 'This 1v1 is not in progress');
       if (match.hostId !== user.id && match.guestId !== user.id) fail(403, 'You are not in this match');
       if (match.status === 'live') resolveMatch(state, match, { forfeitId: user.id });
       else {
         const winnerId = match.hostId === user.id ? match.guestId : match.hostId;
         settleAgreed(state, match, winnerId, { forfeitId: user.id });
       }
-      return { match: matchDto(state, match, user.id), user: userDto(user, { self: true }) };
+      const note = pushMatchLine(match, `${user.username} forfeited`);
+      return { match: matchDto(state, match, user.id), user: userDto(user, { self: true }), note };
     });
+    deliverMatchLine(result.note);
     pingMatch(req.params.id);
     pingLobby();
     res.json(result);
@@ -856,16 +1214,330 @@ app.post(
       if (!host || !guest) fail(400, 'Both players need to be in the lobby');
       if (winnerId !== host.id && winnerId !== guest.id) fail(400, 'Pick a player in this lobby');
       match.reports = match.reports || {};
+      const unlockAt = match.voteUnlockAt || 0;
+      const votesOpen = unlockAt > 0 && Date.now() >= unlockAt;
+      if (match.reports[user.id] && !votesOpen) fail(400, 'Your report is locked');
       match.reports[user.id] = winnerId;
+      if (votesOpen) {
+        match.revotes = match.revotes || {};
+        match.revotes[user.id] = winnerId;
+      }
       if (match.reports[host.id] && match.reports[guest.id]) {
         if (match.reports[host.id] === match.reports[guest.id]) settleAgreed(state, match, match.reports[host.id]);
         else match.status = 'result';
-      } else match.status = 'result';
-      return { match: matchDto(state, match, user.id), user: userDto(user, { self: true }) };
+      } else {
+        match.status = 'result';
+        armReportDeadline(match);
+      }
+      const named = winnerId === user.id ? null : (winnerId === host.id ? host : guest);
+      const line = named
+        ? `${user.username} reported ${named.username} won`
+        : `${user.username} reported they won`;
+      const note = pushMatchLine(match, line);
+      return { match: matchDto(state, match, user.id), user: userDto(user, { self: true }), note };
     });
+    deliverMatchLine(result.note);
     pingMatch(req.params.id);
     pingLobby();
     res.json(result);
+  })
+);
+
+app.post('/api/matches/:id/clip', (req, res) => {
+  let me;
+  try {
+    me = requireUser(req);
+    const type = String(req.headers['content-type'] || '');
+    if (!type.includes('multipart/form-data')) fail(400, 'Upload an MP4');
+    const state = load();
+    const match = state.matches.find((item) => item.id === req.params.id);
+    if (!match) fail(404, 'Match not found');
+    if (match.hostId !== me.id && match.guestId !== me.id) fail(403, 'You are not in this match');
+    if (!reportsConflict(match)) fail(400, 'Both players have to disagree on the winner before uploading');
+  } catch (error) {
+    return sendRouteError(res, error);
+  }
+
+  const bb = busboy({ headers: req.headers, limits: { files: 1, fileSize: CLIP_BYTES } });
+  let rejected = '';
+  let saved = null;
+  const tmp = `${clipFile(req.params.id, me.id)}.part`;
+
+  bb.on('file', (_name, stream, info) => {
+    const mime = String(info.mimeType || '');
+    const filename = String(info.filename || '');
+    if (mime !== 'video/mp4' || !filename.toLowerCase().endsWith('.mp4')) {
+      rejected = 'MP4 only';
+      stream.resume();
+      return;
+    }
+    if (saved) {
+      stream.resume();
+      return;
+    }
+    fs.mkdirSync(path.dirname(tmp), { recursive: true });
+    const out = fs.createWriteStream(tmp);
+    stream.pipe(out);
+    saved = new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (truncated) => {
+        if (settled) return;
+        settled = true;
+        resolve({ filename, truncated });
+      };
+      stream.on('limit', () => {
+        rejected = 'MP4, up to 500MB';
+        out.destroy();
+        stream.resume();
+        finish(true);
+      });
+      out.on('finish', () => finish(!!stream.truncated));
+      out.on('error', reject);
+      stream.on('error', reject);
+    });
+  });
+
+  bb.on('error', (error) => sendRouteError(res, error));
+  bb.on('close', async () => {
+    try {
+      if (rejected) {
+        fs.rmSync(tmp, { force: true });
+        const tooBig = rejected.includes('500MB');
+        fail(tooBig ? 413 : 400, rejected);
+      }
+      if (!saved) fail(400, 'Choose an MP4');
+      const file = await saved;
+      if (file.truncated) {
+        fs.rmSync(tmp, { force: true });
+        fail(413, 'MP4, up to 500MB');
+      }
+      const dest = clipFile(req.params.id, me.id);
+      fs.rmSync(dest, { force: true });
+      fs.renameSync(tmp, dest);
+      const size = fs.statSync(dest).size;
+      const result = update((state) => {
+        const user = state.users.find((item) => item.id === me.id);
+        const match = state.matches.find((item) => item.id === req.params.id);
+        if (!match || !user) fail(404, 'Match not found');
+        if (match.hostId !== user.id && match.guestId !== user.id) fail(403, 'You are not in this match');
+        if (!reportsConflict(match)) fail(400, 'Both players have to disagree on the winner before uploading');
+        match.clips = match.clips || {};
+        match.clips[user.id] = { name: safeClipName(file.filename), size, at: Date.now() };
+        if (bothClipsIn(match) && !match.voteUnlockAt) match.voteUnlockAt = Date.now() + VOTE_LOCK_MS;
+        return { match: matchDto(state, match, user.id) };
+      });
+      pingMatch(req.params.id);
+      res.json(result);
+    } catch (error) {
+      fs.rmSync(tmp, { force: true });
+      sendRouteError(res, error);
+    }
+  });
+  req.pipe(bb);
+});
+
+app.get(
+  '/api/matches/:id/clip/:side',
+  route((req, res) => {
+    const header = req.headers.authorization || '';
+    const bearer = header.startsWith('Bearer ') ? header.slice(7) : '';
+    const user = userFromToken(bearer || String(req.query.token || ''));
+    const side = req.params.side;
+    if (side !== 'host' && side !== 'guest') fail(404, 'Clip not found');
+    const state = load();
+    const match = state.matches.find((item) => item.id === req.params.id);
+    if (!match) fail(404, 'Match not found');
+    const reviewOk = clipAuthorized(match, String(req.query.review || ''));
+    if (!reviewOk) {
+      if (!user) fail(401, 'Sign in first');
+      if (match.hostId !== user.id && match.guestId !== user.id) fail(403, 'You are not in this match');
+    }
+    const ownerId = side === 'host' ? match.hostId : match.guestId;
+    const clip = match.clips && match.clips[ownerId];
+    const file = clipFile(match.id, ownerId);
+    if (!clip || !fs.existsSync(file)) fail(404, 'No clip yet');
+    const filename = safeClipName(clip.name).replace(/"/g, '');
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    fs.createReadStream(file).pipe(res);
+  })
+);
+
+const reviewSending = new Set();
+
+app.post(
+  '/api/matches/:id/review',
+  route(async (req, res) => {
+    const me = requireUser(req);
+    if (reviewSending.has(req.params.id)) fail(400, 'Sending for review');
+    const preview = load();
+    const match = preview.matches.find((item) => item.id === req.params.id);
+    if (!match) fail(404, 'Match not found');
+    if (match.hostId !== me.id && match.guestId !== me.id) fail(403, 'You are not in this match');
+    const host = preview.users.find((item) => item.id === match.hostId);
+    const guest = preview.users.find((item) => item.id === match.guestId);
+    if (!host || !guest) fail(400, 'Both players need to be in the lobby');
+    const testSparring = sparringTestMatch(host, guest);
+    if (!testSparring && (host.npc || guest.npc)) fail(400, 'Sparring matches are not sent for review');
+    if (match.status !== 'result' || !reportsConflict(match)) fail(400, 'You already agree on the winner');
+    if (!testSparring) {
+      if (!bothClipsIn(match)) fail(400, 'Both gameplay clips have to be uploaded');
+      if (!match.voteUnlockAt || Date.now() < match.voteUnlockAt) fail(400, 'Votes are still locked');
+      const revotes = match.revotes || {};
+      if (!revotes[host.id] || !revotes[guest.id]) fail(400, 'Both players have to vote again');
+    }
+    if (match.review && match.review.sent) fail(400, 'Already sent for review');
+    const tokens = {
+      host: crypto.randomBytes(24).toString('hex'),
+      guest: crypto.randomBytes(24).toString('hex'),
+      footage: crypto.randomBytes(24).toString('hex'),
+    };
+    const origins = reviewSiteOrigins();
+    const origin = origins.find((item) => discordAllowsButtonUrl(item)) || origins[0];
+    const md = (value) => String(value || '').replace(/[\u0000-\u001f[\]()]/g, '').trim().slice(0, 80);
+    const linkButton = (label, url) => ({
+      type: 2,
+      style: 5,
+      label: String(label).replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80) || 'Open',
+      url,
+    });
+    const clips = [];
+    if (match.clips?.[host.id] && fs.existsSync(clipFile(match.id, host.id))) {
+      clips.push({ label: 'Host clip', url: `${origin}/api/matches/${match.id}/clip/host?review=${tokens.footage}` });
+    }
+    if (match.clips?.[guest.id] && fs.existsSync(clipFile(match.id, guest.id))) {
+      clips.push({ label: 'Guest clip', url: `${origin}/api/matches/${match.id}/clip/guest?review=${tokens.footage}` });
+    }
+    const awardLabel = (name) => {
+      const clean = md(name) || 'player';
+      return `Award ${clean}`.slice(0, 80);
+    };
+    const components = [{
+      type: 1,
+      components: [
+        { type: 2, style: 1, custom_id: `ogreview:host:${match.id}`, label: awardLabel(host.username) },
+        { type: 2, style: 1, custom_id: `ogreview:guest:${match.id}`, label: awardLabel(guest.username) },
+      ],
+    }];
+    const clipButtons = clips.filter((item) => discordAllowsButtonUrl(item.url));
+    const clipLines = clips
+      .filter((item) => !discordAllowsButtonUrl(item.url))
+      .map((item) => `[${md(item.label) || 'Clip'}](${item.url})`);
+    if (clipButtons.length) {
+      components.push({ type: 1, components: clipButtons.map((item) => linkButton(item.label, item.url)) });
+    }
+    const hostClaim = claimName(match, host, guest, (match.reports || {})[host.id]);
+    const guestClaim = claimName(match, host, guest, (match.reports || {})[guest.id]);
+    const description = [
+      `Match ${md(match.id) || 'unknown'}`,
+      `Project ${md(match.project || 'Eon')} · ${md(match.region || 'EU')}`,
+      `${md(host.username) || 'Host'} claimed ${md(hostClaim) || 'unknown'}`,
+      `${md(guest.username) || 'Guest'} claimed ${md(guestClaim) || 'unknown'}`,
+      ...clipLines,
+    ].join('\n').slice(0, 4096);
+    reviewSending.add(match.id);
+    try {
+      await sendClipReview({
+        embeds: [{
+          title: 'Clip dispute',
+          color: 0x2b2d31,
+          description,
+          footer: { text: 'Each award works once.' },
+        }],
+        components,
+      });
+      const result = update((state) => {
+        const user = state.users.find((item) => item.id === me.id);
+        const row = state.matches.find((item) => item.id === req.params.id);
+        if (!row || !user) fail(404, 'Match not found');
+        if (row.review && row.review.sent) return { match: matchDto(state, row, user.id), user: userDto(user, { self: true }) };
+        row.review = { sent: true, host: tokens.host, guest: tokens.guest, footage: tokens.footage };
+        const note = pushMatchLine(row, 'Sent for review');
+        return { match: matchDto(state, row, user.id), user: userDto(user, { self: true }), note };
+      });
+      deliverMatchLine(result.note);
+      pingMatch(req.params.id);
+      res.json(result);
+    } finally {
+      reviewSending.delete(match.id);
+    }
+  })
+);
+
+function reviewSide(match, token) {
+  const review = match.review || {};
+  if (sameToken(token, review.host)) return 'host';
+  if (sameToken(token, review.guest)) return 'guest';
+  return '';
+}
+
+function reviewHtml(title, body) {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${htmlEscape(title)}</title></head><body style="font-family:sans-serif;background:#0e1116;color:#e8eef8;padding:32px"><h1>${htmlEscape(title)}</h1>${body}</body></html>`;
+}
+
+app.get(
+  '/api/matches/:id/review/:token',
+  route((req, res) => {
+    const state = load();
+    const match = state.matches.find((item) => item.id === req.params.id);
+    if (!match) {
+      res.status(404).type('html').send(reviewHtml('Review link', '<p>This review link has already been used or is not valid.</p>'));
+      return;
+    }
+    const host = state.users.find((item) => item.id === match.hostId);
+    const guest = state.users.find((item) => item.id === match.guestId);
+    const side = reviewSide(match, req.params.token);
+    if (!side || !host || !guest) {
+      res.status(404).type('html').send(reviewHtml('Review link', '<p>This review link has already been used or is not valid.</p>'));
+      return;
+    }
+    if (match.status === 'done') {
+      const winner = match.winnerId === host.id ? host.username : guest.username;
+      res.type('html').send(reviewHtml('Match settled', `<p>This match is already settled. ${htmlEscape(winner)} took the prize.</p>`));
+      return;
+    }
+    const name = side === 'host' ? host.username : guest.username;
+    res.type('html').send(reviewHtml(
+      'Award the win',
+      `<p>Match ${htmlEscape(match.id)}. This awards the win to ${htmlEscape(name)}. The pot pays minus 5%.</p><form method="post"><button type="submit">Award the win to ${htmlEscape(name)}</button></form>`
+    ));
+  })
+);
+
+app.post(
+  '/api/matches/:id/review/:token',
+  route((req, res) => {
+    let page = reviewHtml('Review link', '<p>This review link has already been used or is not valid.</p>');
+    let status = 404;
+    update((state) => {
+      const match = state.matches.find((item) => item.id === req.params.id);
+      if (!match) return;
+      const host = state.users.find((item) => item.id === match.hostId);
+      const guest = state.users.find((item) => item.id === match.guestId);
+      const side = reviewSide(match, req.params.token);
+      if (!side || !host || !guest) return;
+      if (match.status === 'done') {
+        status = 200;
+        const winner = match.winnerId === host.id ? host.username : guest.username;
+        page = reviewHtml('Match settled', `<p>This match is already settled. ${htmlEscape(winner)} took the prize.</p>`);
+        return;
+      }
+      const winnerId = side === 'host' ? host.id : guest.id;
+      settleAgreed(state, match, winnerId);
+      if (match.review) {
+        match.review.host = '';
+        match.review.guest = '';
+      }
+      status = 200;
+      page = 'redirect';
+    });
+    pingMatch(req.params.id);
+    pingLobby();
+    if (page === 'redirect') {
+      res.redirect(303, `${discordAppOrigin()}/play`);
+      return;
+    }
+    res.status(status).type('html').send(page);
   })
 );
 
@@ -878,8 +1550,14 @@ app.post(
       const match = state.matches.find((item) => item.id === req.params.id);
       if (!match) fail(404, 'Match not found');
       if (match.hostId !== user.id && match.guestId !== user.id) fail(403, 'You are not in this match');
+      if (!match.sniped) match.sniped = {};
+      const opponentId = match.hostId === user.id ? match.guestId : match.hostId;
+      if (!opponentId) fail(400, 'Wait for an opponent before you snipe');
+      if (!['open', 'staging'].includes(match.status)) fail(400, 'Snipe before the match starts');
+      const youReady = match.hostId === user.id ? match.hostReady : match.guestReady;
+      if (youReady && !match.sniped[user.id]) fail(400, 'Snipe before you ready up');
       if (match.sniped[user.id]) return { match: matchDto(state, match, user.id), user: userDto(user, { self: true }) };
-      if (user.snipes < 1) fail(400, 'No snipes left. The shop sells a pack of five.');
+      if ((user.snipes || 0) < 1) fail(400, 'No snipes left. The shop sells a pack of five.');
       user.snipes -= 1;
       match.sniped[user.id] = true;
       return { match: matchDto(state, match, user.id), user: userDto(user, { self: true }) };
@@ -894,7 +1572,9 @@ app.post(
     const me = requireUser(req);
     assertPlay(me);
     const result = update((state) => {
+      assertMatchmakingOpen(state);
       const user = state.users.find((item) => item.id === me.id);
+      assertAccountOpen(user);
       const prev = state.matches.find((item) => item.id === req.params.id);
       if (!prev || prev.status !== 'done') fail(400, 'Rematch from a finished 1v1');
       if (prev.hostId !== user.id && prev.guestId !== user.id) fail(403, 'You were not in that match');
@@ -946,11 +1626,9 @@ app.post(
     const user = state.users.find((item) => item.id === me.id);
     if (!user) fail(401, 'Sign in again');
     const amount = purchaseAmount(req.body?.amount);
-    const referral = assertReferralCode(state, user, req.body?.referral);
     const session = await createCoinCheckout({
       user,
       amount,
-      referral,
       origin: checkoutOrigin(req),
     });
     res.json(session);
@@ -1003,6 +1681,32 @@ app.post(
 );
 
 app.post(
+  '/api/shop/equip',
+  route((req, res) => {
+    const me = requireUser(req);
+    const result = update((state) => {
+      const user = state.users.find((item) => item.id === me.id);
+      equipCosmetic(user, String(req.body.slot || ''), String(req.body.id || ''));
+      return { user: userDto(user, { self: true }) };
+    });
+    res.json(result);
+  })
+);
+
+app.post(
+  '/api/shop/unequip',
+  route((req, res) => {
+    const me = requireUser(req);
+    const result = update((state) => {
+      const user = state.users.find((item) => item.id === me.id);
+      unequipCosmetic(user, String(req.body.slot || ''));
+      return { user: userDto(user, { self: true }) };
+    });
+    res.json(result);
+  })
+);
+
+app.post(
   '/api/rewards/daily',
   route((req, res) => {
     const me = requireUser(req);
@@ -1012,7 +1716,7 @@ app.post(
       if (user.dailyClaimedAt && Date.now() - user.dailyClaimedAt < wait) {
         fail(400, 'Daily is still cooling down');
       }
-      const amount = isVip(user) ? 3 : 1.5;
+      const amount = 0.1;
       credit(state, user, amount, 'daily', {});
       user.dailyClaimedAt = Date.now();
       return { user: userDto(user, { self: true }), amount };
@@ -1223,6 +1927,7 @@ wss.on('connection', (ws) => {
               id: user.id,
               username: user.username,
               avatar: user.avatar,
+              chatIcon: user.chatIcon,
               nameColor: user.nameColor,
               discordName: discordName(user),
               discordAvatarUrl: discordAvatarUrl(user),
@@ -1336,19 +2041,38 @@ server.on('error', (error) => console.error(error));
 process.on('uncaughtException', (error) => console.error(error));
 server.listen(port, '127.0.0.1', () => {
   load();
+  update((state) => {
+    closeFinishedMatches(state);
+    releaseSupersededSparring(state);
+    ensureSparringListing(state);
+    sparringCastWin(state);
+  });
   console.log(`OGVAULT API on http://127.0.0.1:${port}`);
+  setReviewSettleHook((matchId) => {
+    pingMatch(matchId);
+    pingLobby();
+  });
+  startDiscordAdmin();
 });
 
 setInterval(() => {
   const finished = [];
+  const notes = [];
   try {
     update((state) => {
-      finished.push(...tickEconomy(state).finished);
+      const tick = tickEconomy(state);
+      finished.push(...tick.finished);
+      notes.push(...(tick.notes || []));
+      notes.push(...sparringCastWin(state));
     });
   } catch (error) {
     console.error(error);
   }
-  if (finished.length) {
+  for (const note of notes) {
+    deliverMatchLine(note);
+    pingMatch(note.matchId);
+  }
+  if (finished.length || notes.length) {
     pingLobby();
     for (const id of finished) pingMatch(id);
   }

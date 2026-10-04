@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { api, onWs, sendWs, setToken } from './api';
 import { useApp } from './App';
 import { ago } from './format';
@@ -8,7 +8,6 @@ import { Amount, Avatar, Modal, Name, Token } from './ui';
 const NAV = [
   ['Home', '/', HomeIcon],
   ['1v1s', '/play', PlayIcon],
-  ['Tournaments', '/tournaments', CupIcon],
   ['Leaderboard', '/leaderboard', BoardIcon],
   ['Player of the Week', '/potw', StarIcon],
   ['Shop', '/shop', ShopIcon],
@@ -17,10 +16,12 @@ const NAV = [
 ];
 
 export function Shell({ children }) {
-  const { me, setMe, toast, auth, setAuth, chatOpen, setChatOpen, signOut, toasts, news, setNews, refreshMe } = useApp();
+  const { me, setMe, activeMatchId, toast, auth, setAuth, chatOpen, setChatOpen, signOut, toasts, news, setNews, refreshMe } = useApp();
   const [q, setQ] = useState('');
   const [hits, setHits] = useState([]);
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const showLobbyBar = me && activeMatchId && pathname !== `/match/${activeMatchId}`;
 
   useEffect(() => {
     if (q.trim().length < 2) {
@@ -52,6 +53,7 @@ export function Shell({ children }) {
         <div className="rail-foot">18+</div>
       </aside>
       <div className="maincol">
+        <div className="top-stack">
         <header className="top">
           <div className="search">
             <SearchIcon />
@@ -97,7 +99,7 @@ export function Shell({ children }) {
             <>
               <NavLink to={`/u/${me.username}`} className="me-link" title={me.username}>
                 <Avatar user={me} size={28} />
-                <span className="me-name">{me.discordName || me.username}</span>
+                <span className="me-name"><Name user={me} label={me.discordName || me.username} /></span>
               </NavLink>
               <button className="btn ghost" onClick={signOut}>Sign out</button>
             </>
@@ -111,6 +113,13 @@ export function Shell({ children }) {
             <ChatIcon />
           </button>
         </header>
+        {showLobbyBar && (
+          <button className="lobby-return" type="button" onClick={() => navigate(`/match/${activeMatchId}`)}>
+            <span>You're in a lobby</span>
+            <strong>Return to match</strong>
+          </button>
+        )}
+        </div>
         <div className="content">{children}<Footer /></div>
       </div>
       {chatOpen && <Chat />}
@@ -129,14 +138,13 @@ export function Shell({ children }) {
             setMe(user);
             setAuth(null);
             await refreshMe();
-            toast(auth === 'up' ? 'Vault open. 25 tokens are on your balance.' : `Welcome back, ${user.username}`);
+            toast(auth === 'up' ? 'Vault open.' : `Welcome back, ${user.username}`);
           }}
         />
       )}
       {news && (
         <Modal title="The vault is open" onClose={() => { localStorage.setItem('ogv_news', 'listings'); setNews(false); }}>
-          <p>List a 1v1 for Eon or Retrac. Both players sit in the lobby, ready up, and use the private room. The match is played on that project, then both report the winner. The pot pays minus a 5% fee.</p>
-          <p>Open a listing when you want another account in the other seat. The private room is only for the two of you.</p>
+          <p>Go head to head in a 1v1 kill race in your favourite OG project and wager just like the good old days.</p>
           <button className="btn" onClick={() => { localStorage.setItem('ogv_news', 'listings'); setNews(false); }}>Got it</button>
         </Modal>
       )}
@@ -155,6 +163,7 @@ function Footer() {
         <h2>Play</h2>
         <NavLink to="/how-to-play">How a lobby works</NavLink>
         <NavLink to="/rewards">Rewards</NavLink>
+        <NavLink to="/shop#inventory">Inventory</NavLink>
         <NavLink to="/play">Open a listing</NavLink>
       </div>
       <div>
@@ -171,72 +180,52 @@ function Footer() {
 
 function Chat() {
   const { me, setAuth } = useApp();
-  const [tab, setTab] = useState('Global');
   const [messages, setMessages] = useState([]);
-  const [dms, setDms] = useState([]);
   const [text, setText] = useState('');
-  const [thread, setThread] = useState('');
   const [rules, setRules] = useState(false);
-  const [vault, setVault] = useState([{ from: 'vault', text: 'Ask about 1v1 listings, fees, VIP, tokens, cups, or snipes.' }]);
   const scroller = useRef(null);
 
   useEffect(() => {
     api('/api/chat').then((data) => setMessages(data.messages)).catch(() => {});
     return onWs((msg) => {
-      if (msg.type === 'chat') setMessages((list) => list.some((item) => item.id === msg.message.id) ? list : [...list, msg.message]);
-      if (msg.type === 'dm') setDms((list) => list.some((item) => item.id === msg.message.id) ? list : [...list, msg.message]);
+      if (msg.type !== 'chat' || !msg.message) return;
+      setMessages((list) => {
+        if (list.some((item) => item.id === msg.message.id)) return list;
+        const user = msg.message.user?.id === me?.id
+          ? { ...msg.message.user, avatar: me.avatar, chatIcon: me.chatIcon, nameColor: me.nameColor, vip: me.vip }
+          : msg.message.user;
+        return [...list, { ...msg.message, user }];
+      });
     });
-  }, []);
+  }, [me?.id, me?.avatar, me?.chatIcon, me?.nameColor, me?.vip]);
 
   useEffect(() => {
-    if (!me || tab !== 'Messages') return;
-    api('/api/dms').then((data) => setDms(data.messages)).catch(() => {});
-  }, [me, tab]);
+    if (!me) return;
+    setMessages((list) => list.map((message) => (
+      message.user?.id === me.id
+        ? { ...message, user: { ...message.user, avatar: me.avatar, chatIcon: me.chatIcon, nameColor: me.nameColor, vip: me.vip } }
+        : message
+    )));
+  }, [me?.id, me?.avatar, me?.chatIcon, me?.nameColor, me?.vip]);
 
   useEffect(() => {
     if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
-  }, [messages, tab, vault, thread, dms]);
-
-  const unread = useMemo(() => {
-    if (!me) return 0;
-    return dms.filter((row) => row.to?.id === me.id && !row.read).length;
-  }, [dms, me]);
-
-  const threads = useMemo(() => {
-    const map = new Map();
-    for (const row of dms) {
-      const other = row.from?.id === me?.id ? row.to : row.from;
-      if (!other) continue;
-      map.set(other.username, { user: other, last: row });
-    }
-    return [...map.values()];
-  }, [dms, me]);
-
-  const threadRows = dms.filter((row) => row.from?.username === thread || row.to?.username === thread);
+  }, [messages]);
 
   function send() {
     const value = text.trim();
-    if (!value) return;
-    if (tab === 'Global') sendWs({ type: 'chat', text: value });
-    if (tab === 'Messages' && thread) sendWs({ type: 'dm', username: thread, text: value });
-    if (tab === 'Vault') {
-      setVault((list) => [...list, { from: 'me', text: value }, { from: 'vault', text: vaultAnswer(value) }]);
-    }
+    if (!value || !me) return;
+    sendWs({ type: 'chat', text: value });
     setText('');
   }
 
   return (
     <aside className="chat">
       <div className="chat-tabs">
-        {['Global', 'Messages', 'Friends', 'Vault'].map((name) => (
-          <button key={name} className={tab === name ? 'on' : ''} onClick={() => setTab(name)}>
-            {name}
-            {name === 'Messages' && unread > 0 && <i>{unread}</i>}
-          </button>
-        ))}
+        <button className="on" type="button">Live Chat</button>
       </div>
       <div className="chat-log" ref={scroller}>
-        {tab === 'Global' && messages.filter((message) => message.user).map((message) => (
+        {messages.filter((message) => message.user).map((message) => (
           <article key={message.id}>
             <Avatar user={message.user} size={28} />
             <div>
@@ -245,48 +234,21 @@ function Chat() {
             </div>
           </article>
         ))}
-        {tab === 'Messages' && !me && <p className="muted">Sign in to message players.</p>}
-        {tab === 'Messages' && me && !thread && threads.map((item) => (
-          <button key={item.user.username} className="thread" onClick={() => {
-            setThread(item.user.username);
-            api('/api/dms/read', { method: 'POST', body: { username: item.user.username } }).catch(() => {});
-          }}>
-            <Avatar user={item.user} size={28} />
-            <span><Name user={item.user} /><small>{item.last.text}</small></span>
-          </button>
-        ))}
-        {tab === 'Messages' && thread && (
-          <>
-            <button className="linkish" onClick={() => setThread('')}>All messages</button>
-            {threadRows.map((row) => (
-              <article key={row.id}>
-                <Avatar user={row.from} size={28} />
-                <div><header><Name user={row.from} /></header><p>{row.text}</p></div>
-              </article>
-            ))}
-          </>
-        )}
-        {tab === 'Friends' && <FriendList />}
-        {tab === 'Vault' && vault.map((line, index) => (
-          <article key={index} className={line.from === 'vault' ? 'vault-line' : ''}>
-            <div><p>{line.text}</p></div>
-          </article>
-        ))}
       </div>
       <form className="chat-form" onSubmit={(event) => { event.preventDefault(); send(); }}>
         <input
           value={text}
           maxLength={180}
-          disabled={!me && tab !== 'Vault'}
-          placeholder={me || tab === 'Vault' ? 'Type your message' : 'Sign in to talk'}
+          disabled={!me}
+          placeholder={me ? 'Type your message' : 'Sign in to talk'}
           aria-label="Type your message"
           onChange={(event) => setText(event.target.value)}
-          onFocus={() => { if (!me && tab !== 'Vault') setAuth('in'); }}
+          onFocus={() => { if (!me) setAuth('in'); }}
         />
         <div>
           <button type="button" className="linkish" onClick={() => setRules(true)}>Rules</button>
           <span>{text.length}/180</span>
-          <button className="btn" type="submit" disabled={!text.trim() || (!me && tab !== 'Vault')}>Send</button>
+          <button className="btn" type="submit" disabled={!text.trim() || !me}>Send</button>
         </div>
       </form>
       {rules && (
@@ -300,37 +262,6 @@ function Chat() {
       )}
     </aside>
   );
-}
-
-function FriendList() {
-  const { me, setAuth } = useApp();
-  const [friends, setFriends] = useState([]);
-  useEffect(() => {
-    if (!me) return;
-    api('/api/friends').then((data) => setFriends(data.friends)).catch(() => {});
-  }, [me]);
-  if (!me) return <p className="muted">Sign in to keep a list. <button className="linkish" onClick={() => setAuth('up')}>Register</button></p>;
-  if (!friends.length) return <p className="muted">No friends yet. Add one from a profile.</p>;
-  return friends.map((user) => (
-    <article key={user.id}>
-      <Avatar user={user} size={28} />
-      <div>
-        <header><Name user={user} link /> {user.online && <span className="live-dot">live</span>}</header>
-        <p className="muted">{user.stats.wins} wins · {user.stats.winRate}% </p>
-      </div>
-    </article>
-  ));
-}
-
-function vaultAnswer(text) {
-  const q = text.toLowerCase();
-  if (/fee|rake|pot|payout/.test(q)) return 'Winner takes the pot minus 5%. A 2 token entry makes a 4 token pot and a 3.80 payout. Ties refund both entries.';
-  if (/vip/.test(q)) return 'OG VIP is 30 tokens for 30 days: gold frame, crown, 10 snipes, a 3 token daily, an 8 token referral bonus, and fee-free tips.';
-  if (/snipe/.test(q)) return 'A snipe shows the other player’s record before you ready up. Packs of five are in the shop. VIP includes 10.';
-  if (/token|wallet|withdraw|deposit|tip/.test(q)) return 'Vault Tokens are this server’s play ledger. Deposit packs open checkout at one US dollar per coin, and tokens are added after the payment is confirmed. Withdrawals stay pending for 24 hours. Tips send tokens to another player, with a 5% fee unless you have OG VIP.';
-  if (/cup|tournament/.test(q)) return 'Join a cup, then play 1v1 listings. A win is 100 points. Prizes pay 60 / 25 / 15 when the clock ends.';
-  if (/play|cook|eon|retrac|lobby|1v1|box|ready/.test(q)) return 'Create a listing for Eon or Retrac. Both players ready up, play the 1v1 on that project, and report the winner in the private room. Agreeing reports pay the pot minus 5%.';
-  return 'I can talk through 1v1 listings, the 5% fee, VIP, snipes, tokens, and cups. Ask one of those.';
 }
 
 function clientDiscordUrl() {
@@ -475,7 +406,6 @@ function AuthModal({ mode, onClose, onMode, onDone }) {
 
 function HomeIcon() { return <svg viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z" /></svg>; }
 function PlayIcon() { return <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><path d="M12 8v4l3 2" /></svg>; }
-function CupIcon() { return <svg viewBox="0 0 24 24"><path d="M7 4h10v3a5 5 0 0 1-10 0zM8 20h8M12 12v8M5 6H3v1a4 4 0 0 0 4 4M19 6h2v1a4 4 0 0 1-4 4" /></svg>; }
 function BoardIcon() { return <svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16M8 16v-5M12 16V8M16 16v-3" /></svg>; }
 function StarIcon() { return <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3" /><path d="M6 20c1-3 3-4.5 6-4.5S17 17 18 20" /></svg>; }
 function ShopIcon() { return <svg viewBox="0 0 24 24"><path d="M4 8h16l-1 12H5zM8 8V6a4 4 0 0 1 8 0v2" /></svg>; }

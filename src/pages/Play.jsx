@@ -1,24 +1,17 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { FIRST_TO, MODES, PLATFORMS, PROJECTS, REGIONS } from '../../shared/listings.js';
+import { Link, useNavigate } from 'react-router-dom';
+import { MODES, PLATFORMS, PROJECTS, REGIONS, parseEntry } from '../../shared/listings.js';
 import { api } from '../api';
 import { useApp } from '../App';
 import { MatchTable } from './Home';
 import { Amount, PageHead } from '../ui';
 
-const PRESETS = [0.5, 1, 2, 5, 10, 25];
-
 export function Play() {
   const { me, setAuth, setMe, toast, rev } = useApp();
-  const [params] = useSearchParams();
   const navigate = useNavigate();
-  const [entry, setEntry] = useState(0.5);
-  const [opponent, setOpponent] = useState(params.get('vs') || '');
+  const [entry, setEntry] = useState('1');
   const [project, setProject] = useState('Eon');
-  const [mode, setMode] = useState(MODES[0]);
   const [region, setRegion] = useState('EU');
-  const [platform, setPlatform] = useState('All');
-  const [firstTo, setFirstTo] = useState(1);
   const [matches, setMatches] = useState([]);
   const [error, setError] = useState('');
 
@@ -30,9 +23,11 @@ export function Play() {
     if (!me) { setAuth('in'); return; }
     setError('');
     try {
+      const amount = parseEntry(entry);
+      if (amount == null) throw new Error('Entry must be at least 1 token');
       const data = await api('/api/matches', {
         method: 'POST',
-        body: { entry: Number(entry), opponent, project, mode, region, platform, firstTo },
+        body: { entry: amount, project, mode: MODES[0], region, platform: PLATFORMS[0] },
       });
       if (data.user) setMe(data.user);
       navigate(`/match/${data.match.id}`);
@@ -72,9 +67,7 @@ export function Play() {
             </select>
           </label>
           <label>Mode
-            <select value={mode} onChange={(event) => setMode(event.target.value)}>
-              {MODES.map((item) => <option key={item}>{item}</option>)}
-            </select>
+            <span className="fixed-field">{MODES[0]}</span>
           </label>
           <div className="pair">
             <label>Region
@@ -83,38 +76,26 @@ export function Play() {
               </select>
             </label>
             <label>Platform
-              <select value={platform} onChange={(event) => setPlatform(event.target.value)}>
-                {PLATFORMS.map((item) => <option key={item}>{item}</option>)}
-              </select>
+              <span className="fixed-field">{PLATFORMS[0]}</span>
             </label>
           </div>
-          <label>First to
-            <div className="seg">
-              {FIRST_TO.map((value) => (
-                <button type="button" key={value} className={firstTo === value ? 'on' : ''} onClick={() => setFirstTo(value)}>{value}</button>
-              ))}
-            </div>
-          </label>
-          <div className="presets">
-            {PRESETS.map((value) => (
-              <button key={value} className={Number(entry) === value ? 'on' : ''} onClick={() => setEntry(value)}>
-                <Amount value={value} />
-              </button>
-            ))}
-          </div>
-          <label>Custom entry
-            <input type="number" min="0.5" max="100" step="0.5" value={entry} onChange={(event) => setEntry(event.target.value)} />
-          </label>
-          <label>Challenge a username <span>(optional, private listing)</span>
-            <input value={opponent} onChange={(event) => setOpponent(event.target.value)} placeholder="username" />
+          <label>Entry
+            <input
+              type="number"
+              min="1"
+              step="0.01"
+              inputMode="decimal"
+              value={entry}
+              onChange={(event) => setEntry(event.target.value)}
+            />
           </label>
           {error && <p className="error">{error}</p>}
-          <button className="btn" onClick={create}>Create listing · <Amount value={entry || 0} /></button>
+          <button className="btn" onClick={create}>Create listing · <Amount value={parseEntry(entry) || 0} /></button>
         </div>
         <ol className="steps">
-          <li><b>List it.</b> Pick Eon or Retrac, the mode, region, and first to.</li>
-          <li><b>Ready up.</b> Both players sit in the lobby and mark ready. The private room stays open.</li>
-          <li><b>Play there.</b> Load into the project, play the 1v1, then both report the winner here.</li>
+          <li><b>Create 1v1.</b> Pick Eon or Retrac, the region, and wager fee. 1 game thats it.</li>
+          <li><b>Drop In.</b> Both players ready up at the same time and play one match.</li>
+          <li><b>Win.</b> Whoever gets the most kills in one match wins.</li>
         </ol>
       </section>
 

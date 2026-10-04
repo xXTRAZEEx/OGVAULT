@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import Stripe from 'stripe';
-import { creditPaidCheckout } from './logic.js';
+import { PURCHASE_TAX_PENCE, chargePence, creditPaidCheckout } from './logic.js';
 import { fail, update } from './store.js';
 
 const letters = 'abcdefghijklmnopqrstuvwxyz';
@@ -51,9 +51,9 @@ export function checkoutOrigin(req) {
   return 'http://127.0.0.1:5173';
 }
 
-export async function createCoinCheckout({ user, amount, referral, origin }) {
+export async function createCoinCheckout({ user, amount, origin }) {
   const stripe = requireCheckout();
-  const cents = Math.round(amount * 100);
+  const charged = chargePence(amount);
   const coinsLabel = Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
   try {
     const session = await stripe.checkout.sessions.create({
@@ -65,16 +65,17 @@ export async function createCoinCheckout({ user, amount, referral, origin }) {
       metadata: {
         userId: user.id,
         tokens: String(amount),
-        referral: referral || '',
+        amountPence: String(charged),
       },
       line_items: [
         {
           quantity: 1,
           price_data: {
-            currency: 'usd',
-            unit_amount: cents,
+            currency: 'gbp',
+            unit_amount: charged,
             product_data: {
               name: `${coinsLabel} Coins`,
+              description: `Tax included £${(PURCHASE_TAX_PENCE / 100).toFixed(2)}`,
             },
           },
         },

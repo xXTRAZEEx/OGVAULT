@@ -7,7 +7,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const file = path.join(__dirname, 'data.json');
 
 export const FEE = 0.05;
-export const WELCOME = 25;
 
 export const SHOP = [
   {
@@ -15,7 +14,7 @@ export const SHOP = [
     name: 'OG VIP',
     price: 30,
     tag: 'Membership',
-    blurb: '30 days. Gold frame, crown in chat, 10 snipes, a richer daily, and a bigger referral bonus.',
+    blurb: '30 days. Gold frame, crown, and 10 snipes.',
   },
   {
     id: 'snipes',
@@ -53,18 +52,18 @@ export const SHOP = [
     blurb: 'A trophy ring for your profile and chat.',
   },
   {
-    id: 'icon-flame',
-    name: 'Flame mark',
-    price: 5,
-    tag: 'Style',
-    blurb: 'A flame beside your name in chat.',
-  },
-  {
-    id: 'icon-crown',
-    name: 'Crown mark',
+    id: 'avatar-retrac',
+    name: 'Retrac',
     price: 8,
     tag: 'Style',
-    blurb: 'A crown beside your name in chat.',
+    blurb: 'A small green Retrac mark beside your name.',
+  },
+  {
+    id: 'avatar-eon',
+    name: 'Eon',
+    price: 8,
+    tag: 'Style',
+    blurb: 'A small Eon mark beside your name.',
   },
   {
     id: 'color-blue',
@@ -112,41 +111,11 @@ function seed() {
     dms: [],
     sessions: {},
     potw: { endsAt: ends(7) },
-    tournaments: [
-      {
-        id: 'cup_friday',
-        name: 'Friday Vault Cup',
-        blurb: 'Free entry. Play 1v1 listings before the clock ends. Wins become cup points.',
-        entry: 0,
-        prize: 100,
-        endsAt: ends(3),
-        paidOut: false,
-        board: [],
-      },
-      {
-        id: 'cup_stakes',
-        name: 'High Stakes Sunday',
-        blurb: 'Five tokens to enter. The buy-in stacks onto the prize.',
-        entry: 5,
-        prize: 40,
-        endsAt: ends(6),
-        paidOut: false,
-        board: [],
-      },
-      {
-        id: 'cup_last',
-        name: 'Midnight Lock',
-        blurb: 'Last cup. Paid out.',
-        entry: 0,
-        prize: 80,
-        endsAt: Date.now() - 86400000,
-        paidOut: true,
-        board: [],
-      },
-    ],
+    tournaments: [],
     prizes: 0,
     reports: [],
     withdrawals: [],
+    reviewers: [],
   };
 }
 
@@ -226,6 +195,48 @@ export function load() {
     if (state.potw && (state.potw.candidates || state.potw.voters || typeof state.potw.endsAt !== 'number')) {
       state.potw = { endsAt: state.potw.endsAt || Date.now() + 7 * 86400000 };
       migrated = true;
+    }
+    for (const user of state.users) {
+      const before = JSON.stringify([user.ownedAvatars, user.ownedMarks, user.ownedColors, user.avatar, user.chatIcon, user.nameColor]);
+      const portraits = new Set(Array.isArray(user.ownedAvatars) ? user.ownedAvatars : []);
+      const marks = new Set(Array.isArray(user.ownedMarks) ? user.ownedMarks : []);
+      const colors = new Set(Array.isArray(user.ownedColors) ? user.ownedColors : []);
+      const revoked = new Set(Array.isArray(user.revokedShop) ? user.revokedShop : []);
+      const kept = (id) => id && !revoked.has(id);
+      const portraitIds = ['avatar-heat', 'avatar-frost', 'avatar-gold'];
+      const markIds = ['avatar-retrac', 'avatar-eon'];
+      if (kept(user.avatar) && portraitIds.includes(user.avatar)) portraits.add(user.avatar);
+      if (markIds.includes(user.avatar)) {
+        if (kept(user.avatar)) {
+          marks.add(user.avatar);
+          if (!user.chatIcon || user.chatIcon === 'none' || user.chatIcon === 'flame' || user.chatIcon === 'crown') user.chatIcon = user.avatar;
+        }
+        user.avatar = 'default';
+      }
+      if (user.chatIcon === 'flame' || user.chatIcon === 'crown') user.chatIcon = 'none';
+      marks.delete('flame');
+      marks.delete('crown');
+      for (const id of markIds) {
+        if (portraits.has(id)) {
+          if (kept(id)) marks.add(id);
+          portraits.delete(id);
+        }
+      }
+      if (user.nameColor === 'blue' && kept('color-blue')) colors.add('blue');
+      if (user.nameColor === 'gold' && kept('color-gold')) colors.add('gold');
+      for (const tx of state.txs || []) {
+        if (tx.userId !== user.id || tx.type !== 'shop') continue;
+        const item = tx.meta && tx.meta.item;
+        if (!kept(item)) continue;
+        if (portraitIds.includes(item)) portraits.add(item);
+        if (markIds.includes(item)) marks.add(item);
+        if (item === 'color-blue') colors.add('blue');
+        if (item === 'color-gold') colors.add('gold');
+      }
+      user.ownedAvatars = [...portraits];
+      user.ownedMarks = [...marks];
+      user.ownedColors = [...colors];
+      if (before !== JSON.stringify([user.ownedAvatars, user.ownedMarks, user.ownedColors, user.avatar, user.chatIcon, user.nameColor])) migrated = true;
     }
     if (migrated) save();
   } catch {

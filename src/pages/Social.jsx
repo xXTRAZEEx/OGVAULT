@@ -9,7 +9,6 @@ export function Friends() {
   const { me, setAuth, toast } = useApp();
   const [friends, setFriends] = useState([]);
   const [name, setName] = useState('');
-  const navigate = useNavigate();
   const load = () => api('/api/friends').then((data) => setFriends(data.friends));
   useEffect(() => { if (me) load().catch(() => {}); }, [me?.id]);
   if (!me) {
@@ -36,7 +35,6 @@ export function Friends() {
             <span className="who"><Avatar user={user} size={36} /><Name user={user} link />{user.online && <span className="live-dot">live</span>}</span>
             <span>{user.stats.wins} wins</span>
             <span className="row-actions">
-              <button className="btn ghost" onClick={() => navigate(`/play?vs=${user.username}`)}>Challenge</button>
               <button className="btn ghost" onClick={async () => {
                 await api(`/api/friends/${user.username}`, { method: 'DELETE' });
                 load();
@@ -66,8 +64,11 @@ export function Profile() {
 
   if (error) return <p className="error">{error}</p>;
   if (!data) return <p className="muted">Looking up that player…</p>;
-  const user = data.user;
-  const self = me?.id === user.id;
+  const loaded = data.user;
+  const self = me?.id === loaded.id;
+  const user = self && me
+    ? { ...loaded, avatar: me.avatar, chatIcon: me.chatIcon, nameColor: me.nameColor, vip: me.vip, discordAvatarUrl: me.discordAvatarUrl || loaded.discordAvatarUrl }
+    : loaded;
   const stats = [
     ['Won', user.stats.earned],
     ['Wins', user.stats.wins],
@@ -85,14 +86,14 @@ export function Profile() {
         <Avatar user={user} size={84} />
         <div>
           <p className="kicker">Player {user.vip && '· VIP'}</p>
-          <h1>{user.discordName || <Name user={user} />}</h1>
+          <h1><Name user={user} label={user.discordName || user.username} /></h1>
           {user.discordName && (
             <p className="muted">Discord{user.discordUsername ? ` @${user.discordUsername}` : ''} · {user.username}</p>
           )}
           <p className="muted">Joined {formatDate(user.createdAt)}</p>
         </div>
         <div className="page-actions">
-          {!self && <button className="btn" onClick={() => navigate(`/play?vs=${user.username}`)}>Challenge</button>}
+          {self && <Link className="btn ghost" to="/shop#inventory">Inventory</Link>}
           {!self && (
             <button className="btn ghost" onClick={async () => {
               if (!me) { setAuth('in'); return; }

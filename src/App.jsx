@@ -1,11 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api, onWs, setToken } from './api';
 import { Shell } from './shell';
 import { Home } from './pages/Home';
 import { Play } from './pages/Play';
 import { Match } from './pages/Match';
-import { Tournaments, Tournament, Leaderboard, Potw } from './pages/Boards';
+import { Leaderboard, Potw } from './pages/Boards';
 import { Shop, Wallet, Rewards } from './pages/Economy';
 import { Friends, Profile, HowTo, Legal } from './pages/Social';
 
@@ -14,8 +14,18 @@ export function useApp() {
   return useContext(Ctx);
 }
 
+function PageEnter({ children }) {
+  const { pathname } = useLocation();
+  return (
+    <div key={pathname} className="page-enter">
+      {children}
+    </div>
+  );
+}
+
 export default function App() {
   const [me, setMe] = useState(null);
+  const [activeMatchId, setActiveMatchId] = useState(null);
   const [ready, setReady] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [auth, setAuth] = useState(null);
@@ -32,16 +42,19 @@ export default function App() {
   const refreshMe = useCallback(async () => {
     if (!localStorage.getItem('ogv_token')) {
       setMe(null);
+      setActiveMatchId(null);
       setReady(true);
       return null;
     }
     try {
       const data = await api('/api/me');
       setMe(data.user);
+      setActiveMatchId(data.activeMatchId || null);
       return data.user;
     } catch {
       setToken(null);
       setMe(null);
+      setActiveMatchId(null);
       return null;
     } finally {
       setReady(true);
@@ -68,13 +81,14 @@ export default function App() {
         setAuth('in');
         return;
       }
-      toast(isNew ? 'Vault open. 25 tokens are on your balance.' : `Welcome back, ${user.discordName || user.username}`);
+      toast(isNew ? 'Vault open.' : `Welcome back, ${user.discordName || user.username}`);
     });
   }, [refreshMe, toast]);
 
   useEffect(() => onWs((msg) => {
     if (msg.type === 'lobby') setRev((n) => n + 1);
-  }), []);
+    if (msg.type === 'lobby' || msg.type === 'match') refreshMe();
+  }), [refreshMe]);
 
   const signOut = async () => {
     try {
@@ -84,18 +98,20 @@ export default function App() {
     }
     setToken(null);
     setMe(null);
+    setActiveMatchId(null);
     toast('Signed out');
   };
 
   return (
-    <Ctx.Provider value={{ me, setMe, ready, toast, auth, setAuth, chatOpen, setChatOpen, rev, refreshMe, news, setNews, signOut, toasts }}>
+    <Ctx.Provider value={{ me, setMe, activeMatchId, ready, toast, auth, setAuth, chatOpen, setChatOpen, rev, refreshMe, news, setNews, signOut, toasts }}>
       <Shell>
+        <PageEnter>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/play" element={<Play />} />
           <Route path="/match/:id" element={<Match />} />
-          <Route path="/tournaments" element={<Tournaments />} />
-          <Route path="/tournaments/:id" element={<Tournament />} />
+          <Route path="/tournaments" element={<Navigate to="/play" replace />} />
+          <Route path="/tournaments/:id" element={<Navigate to="/play" replace />} />
           <Route path="/leaderboard" element={<Leaderboard />} />
           <Route path="/potw" element={<Potw />} />
           <Route path="/shop" element={<Shop />} />
@@ -107,6 +123,7 @@ export default function App() {
           <Route path="/legal/:slug" element={<Legal />} />
           <Route path="*" element={<Home missing />} />
         </Routes>
+        </PageEnter>
       </Shell>
     </Ctx.Provider>
   );

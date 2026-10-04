@@ -15,10 +15,62 @@
       href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@500;700&display=swap"
       rel="stylesheet"
     />
+    <style>
+      #root:has(.boot) {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #07080d;
+      }
+      .boot {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 18px;
+        padding: 24px;
+      }
+      .boot img {
+        width: min(360px, 78vw);
+        height: auto;
+        display: block;
+        mix-blend-mode: screen;
+      }
+      .boot p {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: #9aa6bd;
+      }
+      .boot-bar {
+        width: min(250px, 70vw);
+        height: 3px;
+        border-radius: 999px;
+        background: rgba(244, 247, 251, 0.1);
+        overflow: hidden;
+      }
+      .boot-bar span {
+        display: block;
+        height: 100%;
+        width: 38%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, transparent, #6d8dff 40%, #f4f7fb);
+        animation: boot-sweep 1.15s ease-in-out infinite;
+      }
+      @keyframes boot-sweep {
+        0% { transform: translateX(-130%); }
+        100% { transform: translateX(340%); }
+      }
+    </style>
   </head>
-  <body style="margin:0;background:#07080d;color:#f4f7fb;font-family:Segoe UI,sans-serif">
+  <body style="margin:0;background:#07080d;color:#f4f7fb;font-family:Manrope,Segoe UI,sans-serif">
     <div id="root">
-      <p style="padding:24px">Loading OGVAULT…</p>
+      <div class="boot">
+        <img src="/logo.png" alt="OGVAULT" />
+        <p>Loading</p>
+        <div class="boot-bar" role="progressbar" aria-label="Loading"><span></span></div>
+      </div>
     </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

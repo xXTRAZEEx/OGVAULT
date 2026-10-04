@@ -29,50 +29,87 @@ const PALETTES = {
   'avatar-gold': ['#3a2d10', '#f5c451'],
 };
 
+const NAME_MARKS = {
+  'avatar-retrac': '/styles/retrac.png',
+  'avatar-eon': '/styles/eon.png',
+};
+
+function portraitRing(avatar) {
+  if (avatar === 'avatar-heat') return 'ring-heat';
+  if (avatar === 'avatar-frost') return 'ring-frost';
+  if (avatar === 'avatar-gold') return 'ring-gold';
+  return '';
+}
+
+function NameMark({ icon }) {
+  const src = NAME_MARKS[icon];
+  if (!src) return null;
+  const kind = icon === 'avatar-retrac' ? 'retrac' : 'eon';
+  return <img className={`name-mark ${kind}`} src={src} alt="" />;
+}
+
+export function FrameFx({ heat = false, frost = false, vip = false }) {
+  if (!heat && !frost && !vip) return null;
+  const flakes = [0, 1, 2, 3, 4];
+  return (
+    <>
+      {heat && (
+        <span className="frame-fx fx-fire" aria-hidden="true">
+          <i /><i /><i />
+        </span>
+      )}
+      {frost && (
+        <span className="frame-fx fx-snow" aria-hidden="true">
+          {flakes.map((n) => <i key={n} />)}
+        </span>
+      )}
+      {vip && (
+        <span className="frame-fx fx-gold" aria-hidden="true">
+          {flakes.map((n) => <i key={n} />)}
+        </span>
+      )}
+    </>
+  );
+}
+
 export function Avatar({ user, size = 40 }) {
   const [broken, setBroken] = useState(false);
   const photo = !broken && user?.discordAvatarUrl;
+  const ring = portraitRing(user?.avatar);
+  const klass = `avatar ${user?.vip ? 'vip' : ''} ${ring}`.trim();
+  const fx = (
+    <FrameFx
+      heat={user?.avatar === 'avatar-heat'}
+      frost={user?.avatar === 'avatar-frost'}
+      vip={!!user?.vip}
+    />
+  );
   if (photo) {
     return (
-      <span className={`avatar has-photo ${user?.vip ? 'vip' : ''}`} style={{ width: size, height: size }}>
+      <span className={`${klass} has-photo`} style={{ width: size, height: size }}>
         <img src={photo} alt="" width={size} height={size} onError={() => setBroken(true)} />
+        {fx}
       </span>
     );
   }
   const [from, to] = PALETTES[user?.avatar] || PALETTES.default;
   return (
     <span
-      className={`avatar ${user?.vip ? 'vip' : ''}`}
+      className={klass}
       style={{ width: size, height: size, background: `linear-gradient(145deg, ${from}, ${to})`, fontSize: size * 0.4 }}
     >
-      {(user?.username || '?').slice(0, 1).toUpperCase()}
+      <span className="avatar-letter">{(user?.username || '?').slice(0, 1).toUpperCase()}</span>
+      {fx}
     </span>
   );
 }
 
-function Crown() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-      <path d="M1 9h10L9.5 4 7 6.5 6 3 5 6.5 2.5 4z" fill="#f5c451" />
-    </svg>
-  );
-}
-
-function Flame() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-      <path d="M6 1s2 2.2 2 4.2c0 1-.6 1.6-1.2 1.6.8-.2 1.7-1 1.7-2.2C10 7 8.4 10 6 10S2 7.2 2 5c0-1.2.8-2 1.4-2.6C4 4 4.6 5 5.2 5 5 3.4 6 1 6 1z" fill="#ff8a4c" />
-    </svg>
-  );
-}
-
-export function Name({ user, link = false }) {
+export function Name({ user, link = false, label }) {
   if (!user) return null;
   const body = (
     <span className={`uname c-${user.nameColor || 'default'}`}>
-      {user.chatIcon === 'crown' && <Crown />}
-      {user.chatIcon === 'flame' && <Flame />}
-      {user.username}
+      {label || user.username}
+      <NameMark icon={user.chatIcon} />
       {user.vip && <em>VIP</em>}
     </span>
   );

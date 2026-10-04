@@ -90,7 +90,7 @@ export function Tournaments() {
             <p>{cup.blurb}</p>
             <div className="split">
               <span>Prize <Amount value={cup.prize} /></span>
-              <span>{cup.players} players</span>
+              <span>{cup.maxPlayers ? `${cup.players}/${cup.maxPlayers}` : cup.players} players</span>
             </div>
           </Link>
         ))}
@@ -123,9 +123,27 @@ export function Tournament() {
       <div className="panel actions">
         <div>
           <p>Prize <Amount value={cup.prize} /> · entry {cup.entry ? <Amount value={cup.entry} /> : 'free'}</p>
-          <p className="muted">A win is worth 100 points plus your score ÷ 100. Payout is 60 / 25 / 15.</p>
+          <p className="muted">
+            {cup.places
+              ? `Prizes ${cup.places.map((amount) => amount).join(' / ')} for 1st, 2nd, and 3rd. A win is 100 points plus your score ÷ 100.`
+              : 'A win is worth 100 points plus your score ÷ 100. Payout is 60 / 25 / 15.'}
+          </p>
         </div>
-        {data.joined ? <Link className="btn" to="/play">Play a table</Link> : (
+        {data.joined ? (
+          <>
+            <Link className="btn" to="/play">Play a table</Link>
+            {!cup.paidOut && now < cup.endsAt && (
+              <button className="btn ghost" onClick={async () => {
+                try {
+                  const next = await api(`/api/tournaments/${id}/leave`, { method: 'POST', body: {} });
+                  setMe(next.user);
+                  toast('You left the cup');
+                  load();
+                } catch (err) { toast(err.message, 'bad'); }
+              }}>Leave tournament</button>
+            )}
+          </>
+        ) : (
           <button className="btn" onClick={async () => {
             if (!me) { setAuth('in'); return; }
             try {
@@ -140,7 +158,7 @@ export function Tournament() {
       <div className="panel">
         <div className="tr head board"><span>#</span><span>Player</span><span>Plays</span><span>Points</span></div>
         {cup.board.map((row) => (
-          <div className="tr board" key={row.user?.id || row.place}>
+          <div className={`tr board${row.place <= 3 ? ` place-${row.place}` : ''}`} key={row.user?.id || row.place}>
             <span>{row.place}</span>
             <span className="who">{row.user && <Avatar user={row.user} size={28} />}{row.user && <Name user={row.user} link />}</span>
             <span>{row.plays}</span>
