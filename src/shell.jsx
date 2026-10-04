@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { api, onWs, sendWs, setToken } from './api';
+import { api, apiUrl, onWs, sendWs, setToken } from './api';
 import { useApp } from './App';
 import { ago } from './format';
 import { Amount, Avatar, Modal, Name, Token } from './ui';
@@ -306,7 +306,7 @@ function DiscordButton() {
   async function start() {
     const direct = clientDiscordUrl();
     try {
-      const res = await fetch('/api/auth/discord/start', { headers: { Accept: 'application/json' } });
+      const res = await fetch(apiUrl('/api/auth/discord/start'), { headers: { Accept: 'application/json' } });
       const data = await res.json().catch(() => ({}));
       const url = typeof data.url === 'string' ? data.url.trim() : '';
       if (res.ok && url.startsWith('https://discord.com/')) {
@@ -323,7 +323,7 @@ function DiscordButton() {
         window.location.assign(direct);
         return;
       }
-      window.location.assign('/api/auth/discord/start');
+      window.location.assign(apiUrl('/api/auth/discord/start'));
     }
   }
 

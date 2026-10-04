@@ -56,6 +56,28 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
+const ALLOWED_ORIGINS = new Set([
+  'https://ogvault.co.uk',
+  'https://www.ogvault.co.uk',
+  'http://127.0.0.1:5173',
+  'http://localhost:5173',
+]);
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  }
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(204);
+    return;
+  }
+  next();
+});
+
 app.post(
   '/api/stripe/webhook',
   express.raw({ type: 'application/json' }),
@@ -1855,7 +1877,11 @@ if (process.env.NODE_ENV === 'production' && fs.existsSync(dist)) {
 }
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({
+  server,
+  path: '/ws',
+  verifyClient: ({ origin }) => !origin || ALLOWED_ORIGINS.has(origin),
+});
 
 wss.on('connection', (ws) => {
   sockets.add(ws);

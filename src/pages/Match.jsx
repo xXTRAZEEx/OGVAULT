@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, onWs, sendWs } from '../api';
+import { api, apiUrl, onWs, sendWs } from '../api';
 import { useApp } from '../App';
 import { formatDate, useNow } from '../format';
 import { Amount, Avatar, Modal, Name } from '../ui';
@@ -344,7 +344,7 @@ function Clips({ match, toast }) {
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem('ogv_token') : '';
 
   function clipSrc(side) {
-    return `/api/matches/${match.id}/clip/${side}?token=${encodeURIComponent(token || '')}`;
+    return apiUrl(`/api/matches/${match.id}/clip/${side}?token=${encodeURIComponent(token || '')}`);
   }
 
   async function upload(event) {
@@ -363,7 +363,7 @@ function Clips({ match, toast }) {
     body.append('file', file);
     setBusy(true);
     try {
-      const res = await fetch(`/api/matches/${match.id}/clip`, {
+      const res = await fetch(apiUrl(`/api/matches/${match.id}/clip`), {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body,
