@@ -115,14 +115,7 @@ function canSendForReview(match, host, guest) {
     && !!reports[match.hostId]
     && !!reports[match.guestId]
     && reports[match.hostId] !== reports[match.guestId];
-  if (!conflict) return false;
-  if (sparringTestMatch(host, guest)) return true;
-  const clips = match.clips || {};
-  const bothClips = !!(clips[match.hostId] && clips[match.guestId]);
-  const unlocked = (match.voteUnlockAt || 0) > 0 && Date.now() >= match.voteUnlockAt;
-  const revotes = match.revotes || {};
-  const bothRevoted = !!(revotes[match.hostId] && revotes[match.guestId]);
-  return bothClips && unlocked && bothRevoted;
+  return conflict;
 }
 
 function clipBrief(match, userId) {

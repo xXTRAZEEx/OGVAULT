@@ -337,7 +337,7 @@ function Forfeit({ onForfeit }) {
   );
 }
 
-const CLIP_CAP = 500 * 1024 * 1024;
+const CLIP_CAP = 3 * 1024 * 1024 * 1024;
 
 function Clips({ match, toast }) {
   const [busy, setBusy] = useState(false);
@@ -356,7 +356,7 @@ function Clips({ match, toast }) {
       return;
     }
     if (file.size > CLIP_CAP) {
-      toast('MP4, up to 500MB', 'bad');
+      toast('MP4, up to 3GB', 'bad');
       return;
     }
     const body = new FormData();
@@ -380,7 +380,7 @@ function Clips({ match, toast }) {
 
   return (
     <section className="clips">
-      <p>Reports disagree. Both players submit their own gameplay. MP4, up to 500MB.</p>
+      <p>Reports disagree. Both players can submit gameplay. MP4, up to 3GB. Send for review is available now.</p>
       <ClipRow label={match.host?.username || 'Host'} clip={match.clips?.host} src={clipSrc('host')} />
       <ClipRow label={match.guest?.username || 'Guest'} clip={match.clips?.guest} src={clipSrc('guest')} />
       <label className={`btn ghost ${busy ? 'wait' : ''}`}>

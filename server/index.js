@@ -167,7 +167,7 @@ function requireUser(req) {
   return user;
 }
 
-const CLIP_BYTES = 500 * 1024 * 1024;
+const CLIP_BYTES = 3 * 1024 * 1024 * 1024;
 
 function userFromToken(token) {
   if (!token) return null;
@@ -1310,7 +1310,7 @@ app.post('/api/matches/:id/clip', (req, res) => {
         resolve({ filename, truncated });
       };
       stream.on('limit', () => {
-        rejected = 'MP4, up to 500MB';
+        rejected = 'MP4, up to 3GB';
         out.destroy();
         stream.resume();
         finish(true);
@@ -1326,14 +1326,14 @@ app.post('/api/matches/:id/clip', (req, res) => {
     try {
       if (rejected) {
         fs.rmSync(tmp, { force: true });
-        const tooBig = rejected.includes('500MB');
+        const tooBig = rejected.includes('3GB');
         fail(tooBig ? 413 : 400, rejected);
       }
       if (!saved) fail(400, 'Choose an MP4');
       const file = await saved;
       if (file.truncated) {
         fs.rmSync(tmp, { force: true });
-        fail(413, 'MP4, up to 500MB');
+        fail(413, 'MP4, up to 3GB');
       }
       const dest = clipFile(req.params.id, me.id);
       fs.rmSync(dest, { force: true });
@@ -1404,12 +1404,6 @@ app.post(
     const testSparring = sparringTestMatch(host, guest);
     if (!testSparring && (host.npc || guest.npc)) fail(400, 'Sparring matches are not sent for review');
     if (match.status !== 'result' || !reportsConflict(match)) fail(400, 'You already agree on the winner');
-    if (!testSparring) {
-      if (!bothClipsIn(match)) fail(400, 'Both gameplay clips have to be uploaded');
-      if (!match.voteUnlockAt || Date.now() < match.voteUnlockAt) fail(400, 'Votes are still locked');
-      const revotes = match.revotes || {};
-      if (!revotes[host.id] || !revotes[guest.id]) fail(400, 'Both players have to vote again');
-    }
     if (match.review && match.review.sent) fail(400, 'Already sent for review');
     const tokens = {
       host: crypto.randomBytes(24).toString('hex'),
@@ -1953,6 +1947,9 @@ if (process.env.NODE_ENV === 'production' && fs.existsSync(dist)) {
 }
 
 const server = http.createServer(app);
+server.requestTimeout = 0;
+server.headersTimeout = 0;
+server.timeout = 0;
 const wss = new WebSocketServer({
   server,
   path: '/ws',
