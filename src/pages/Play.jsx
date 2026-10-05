@@ -4,7 +4,7 @@ import { MODES, PLATFORMS, PROJECTS, REGIONS, listingFee, listingPrize, parseEnt
 import { api } from '../api';
 import { useApp } from '../App';
 import { MatchTable } from './Home';
-import { Amount, PageHead, MatchmakingClosed } from '../ui';
+import { Amount, PageHead } from '../ui';
 
 export function Play() {
   const { me, setAuth, setMe, toast, rev } = useApp();
@@ -13,14 +13,10 @@ export function Play() {
   const [project, setProject] = useState('Eon');
   const [region, setRegion] = useState('EU');
   const [matches, setMatches] = useState([]);
-  const [matchmaking, setMatchmaking] = useState(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api('/api/matches').then((data) => {
-      setMatches(data.matches.filter((match) => match.status === 'open'));
-      setMatchmaking(data.matchmaking || null);
-    }).catch((err) => setError(err.message));
+    api('/api/matches').then((data) => setMatches(data.matches.filter((match) => match.status === 'open'))).catch((err) => setError(err.message));
   }, [rev]);
 
   async function create() {
@@ -49,10 +45,6 @@ export function Play() {
     } catch (err) {
       toast(err.message, 'bad');
     }
-  }
-
-  if (matchmaking && matchmaking.enabled === false) {
-    return <MatchmakingClosed reason={matchmaking.reason} />;
   }
 
   return (

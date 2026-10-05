@@ -104,11 +104,33 @@ const commands = [
     .setName('matchmaking')
     .setDescription('Turn 1v1 matchmaking on or off')
     .addBooleanOption((option) => option.setName('enabled').setDescription('On allows new 1v1 listings').setRequired(true))
-    .addStringOption((option) =>
-      option.setName('reason').setDescription('Shown on the site while matchmaking is off').setRequired(false).setMaxLength(200)
-    )
     .addNumberOption((option) =>
       option.setName('hours').setDescription('How long to keep matchmaking off').setRequired(false).setMinValue(0.01)
+    )),
+  adminOnly(new SlashCommandBuilder()
+    .setName('website')
+    .setDescription('Take the whole site offline or bring it back')
+    .addStringOption((option) =>
+      option
+        .setName('status')
+        .setDescription('Online or offline')
+        .setRequired(true)
+        .addChoices({ name: 'Online', value: 'online' }, { name: 'Offline', value: 'offline' })
+    )
+    .addStringOption((option) =>
+      option
+        .setName('reason')
+        .setDescription('Shown on the offline page')
+        .addChoices({ name: 'Repair', value: 'repair' }, { name: 'Maintenance', value: 'maintenance' })
+    )
+    .addIntegerOption((option) =>
+      option.setName('length').setDescription('How long until the site is back').setMinValue(1).setMaxValue(365)
+    )
+    .addStringOption((option) =>
+      option
+        .setName('unit')
+        .setDescription('Hours or days')
+        .addChoices({ name: 'Hours', value: 'hours' }, { name: 'Days', value: 'days' })
     )),
   adminOnly(new SlashCommandBuilder()
     .setName('balance')
@@ -465,18 +487,38 @@ function adjustTokens(username, rawAmount, direction) {
   });
 }
 
-function setMatchmaking(enabled, lengthHours, reason) {
-  const text = String(reason || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 200);
+function setMatchmaking(enabled, lengthHours) {
   return update((state) => {
     if (enabled) {
       state.matchmakingDisabledUntil = 0;
-      state.matchmakingReason = '';
-      return { enabled: true, until: 0, reason: '' };
+      return { enabled: true, until: 0 };
     }
-    state.matchmakingReason = text;
-    const length = lengthHours == null ? 24 * 3650 : hours(lengthHours);
+    const length = hours(lengthHours);
     state.matchmakingDisabledUntil = Date.now() + length * 60 * 60 * 1000;
-    return { enabled: false, until: state.matchmakingDisabledUntil, reason: text };
+    return { enabled: false, until: state.matchmakingDisabledUntil };
+  });
+}
+
+function setWebsite(status, reason, length, unit) {
+  return update((state) => {
+    if (status === 'online') {
+      state.websiteOffline = false;
+      state.websiteReason = '';
+      state.websiteBackAt = 0;
+      return { online: true, reason: '', until: 0 };
+    }
+    const why = reason === 'repair' ? 'repair' : 'maintenance';
+    let until = 0;
+    if (length != null) {
+      const count = Number(length);
+      if (!Number.isInteger(count) || count < 1) fail(400, 'Enter a whole number of hours or days');
+      const hoursLong = (unit === 'days' ? count * 24 : count);
+      until = Date.now() + hoursLong * 60 * 60 * 1000;
+    }
+    state.websiteOffline = true;
+    state.websiteReason = why;
+    state.websiteBackAt = until;
+    return { online: false, reason: why, until };
   });
 }
 
@@ -997,11 +1039,29 @@ async function handleCommand(interaction) {
     }
     if (interaction.commandName === 'matchmaking') {
       const enabled = interaction.options.getBoolean('enabled');
-      const result = setMatchmaking(enabled, interaction.options.getNumber('hours'), interaction.options.getString('reason'));
+      const result = setMatchmaking(enabled, interaction.options.getNumber('hours'));
       await interaction.reply({
         content: result.enabled
           ? 'Matchmaking is on.'
-          : `Matchmaking is off${result.reason ? `: ${result.reason}` : ''}.`,
+          : `Matchmaking is off until <t:${Math.floor(result.until / 1000)}:f>.`,
+        ephemeral: true,
+      });
+      return;
+    }
+    if (interaction.commandName === 'website') {
+      const result = setWebsite(
+        interaction.options.getString('status'),
+        interaction.options.getString('reason'),
+        interaction.options.getInteger('length'),
+        interaction.options.getString('unit'),
+      );
+      const label = result.reason === 'repair' ? 'repair' : 'maintenance';
+      await interaction.reply({
+        content: result.online
+          ? 'The site is online.'
+          : result.until
+            ? `The site is offline for ${label} until <t:${Math.floor(result.until / 1000)}:R>.`
+            : `The site is offline for ${label}.`,
         ephemeral: true,
       });
       return;

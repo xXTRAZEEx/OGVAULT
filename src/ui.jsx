@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 export function Token({ size = 14 }) {
@@ -150,12 +150,25 @@ export function PageHead({ kicker, title, text, children }) {
   );
 }
 
-export function MatchmakingClosed({ reason }) {
+export function WebsiteDown({ reason, until }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!until) return undefined;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [until]);
+  const left = until ? Math.max(0, until - now) : 0;
+  const totalSeconds = Math.floor(left / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const clock = [hours, minutes, seconds].map((part) => String(part).padStart(2, '0')).join(':');
   return (
-    <section className="matchmaking-off">
+    <section className="website-down">
       <img src="/logo.png" alt="OGVAULT" />
-      <h1>Matchmaking is disabled</h1>
-      {reason ? <p>{reason}</p> : null}
+      <h1>{reason || 'Down for maintenance'}</h1>
+      {until ? <p className="website-clock">{days ? `${days}d ` : ''}{clock}</p> : null}
     </section>
   );
 }

@@ -968,8 +968,10 @@ canvas { border-radius: 24px; background: #07080d; width: 100%; height: auto; }
   .bj-card.deal, .bj-card.flip, .bj-result.show { animation: none; }
 }
 
-.matchmaking-off {
-  min-height: 68vh;
+.website-down {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -977,18 +979,18 @@ canvas { border-radius: 24px; background: #07080d; width: 100%; height: auto; }
   text-align: center;
   gap: 14px;
   padding: 24px;
+  background: #07090d;
 }
-.matchmaking-off img {
+.website-down img {
   width: min(440px, 86vw);
   height: 210px;
   object-fit: cover;
   object-position: center 48%;
   mix-blend-mode: screen;
 }
-.matchmaking-off h1 { font-size: 28px; }
-.matchmaking-off p {
-  max-width: 460px;
-  color: var(--muted);
-  font-size: 16px;
-  line-height: 1.45;
+.website-down h1 { font-size: 28px; }
+.website-clock {
+  font-size: 42px;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
 }

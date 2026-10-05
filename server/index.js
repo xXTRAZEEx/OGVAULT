@@ -97,6 +97,19 @@ app.post(
 
 app.use(express.json({ limit: '32kb' }));
 
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/') || req.path === '/api/health' || req.path === '/api/stripe/webhook' || req.path === '/api/nowpayments/ipn') {
+    next();
+    return;
+  }
+  const status = websiteStatus(load());
+  if (!status.offline) {
+    next();
+    return;
+  }
+  res.status(503).json({ error: status.reason });
+});
+
 const sockets = new Set();
 const online = new Set();
 
@@ -287,7 +300,6 @@ function homePayload(viewer, timeZone) {
       duels: fresh.users.reduce((sum, user) => sum + (user.stats.matches || 0), 0),
       online: sockets.size,
     },
-    matchmaking: matchmakingStatus(fresh),
     potw: potwDto(fresh),
     matches: fresh.matches
       .filter((match) => match.status === 'open' && !match.invitee)
@@ -463,22 +475,24 @@ function assertAccountOpen(user) {
   if (user && user.banUntil > Date.now()) fail(403, 'This account is banned');
 }
 
-function matchmakingStatus(state) {
-  const until = state.matchmakingDisabledUntil || 0;
-  const enabled = until <= Date.now();
-  return { enabled, reason: enabled ? '' : String(state.matchmakingReason || '') };
+function websiteStatus(state) {
+  const backAt = Number(state.websiteBackAt) || 0;
+  const offline = !!state.websiteOffline && (!backAt || backAt > Date.now());
+  const reason = state.websiteReason === 'repair' ? 'Down for repair' : 'Down for maintenance';
+  return { offline, reason: offline ? reason : '', until: offline ? backAt : 0 };
 }
 
 function assertMatchmakingOpen(state) {
-  const status = matchmakingStatus(state);
-  if (!status.enabled) fail(403, status.reason || 'Matchmaking is turned off');
+  if ((state.matchmakingDisabledUntil || 0) > Date.now()) {
+    fail(403, 'Matchmaking is turned off');
+  }
 }
 
 function assertPlay(user) {
   assertAccountOpen(user);
 }
 
-app.get('/api/health', route((_req, res) => res.json({ ok: true })));
+app.get('/api/health', route((_req, res) => res.json({ ok: true, website: websiteStatus(load()) })));
 
 app.get(
   '/api/home',
@@ -904,7 +918,7 @@ app.get(
       .filter((match) => !match.invitee || match.hostId === viewer?.id || match.invitee === viewer?.username)
       .map((match) => matchDto(state, match, viewer?.id))
       .sort((a, b) => b.createdAt - a.createdAt);
-    res.json({ matches, matchmaking: matchmakingStatus(state) });
+    res.json({ matches });
   })
 );
 

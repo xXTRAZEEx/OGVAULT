@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api, onWs, setToken } from './api';
 import { Shell } from './shell';
+import { WebsiteDown } from './ui';
 import { Home } from './pages/Home';
 import { Play } from './pages/Play';
 import { Match } from './pages/Match';
@@ -33,6 +34,7 @@ export default function App() {
   const [chatOpen, setChatOpen] = useState(() => window.innerWidth > 1100);
   const [rev, setRev] = useState(0);
   const [news, setNews] = useState(() => localStorage.getItem('ogv_news') !== 'listings');
+  const [website, setWebsite] = useState(null);
 
   const toast = useCallback((text, kind = 'ok') => {
     const id = Math.random().toString(36).slice(2);
@@ -91,6 +93,18 @@ export default function App() {
     if (msg.type === 'lobby' || msg.type === 'match') refreshMe();
   }), [refreshMe]);
 
+  useEffect(() => {
+    let stop = false;
+    const pull = () => {
+      api('/api/health')
+        .then((data) => { if (!stop) setWebsite(data.website || { offline: false }); })
+        .catch(() => {});
+    };
+    pull();
+    const id = setInterval(pull, 10000);
+    return () => { stop = true; clearInterval(id); };
+  }, []);
+
   const signOut = async () => {
     try {
       await api('/api/auth/logout', { method: 'POST', body: {} });
@@ -102,6 +116,8 @@ export default function App() {
     setActiveMatchId(null);
     toast('Signed out');
   };
+
+  if (website?.offline) return <WebsiteDown reason={website.reason} until={website.until} />;
 
   return (
     <Ctx.Provider value={{ me, setMe, activeMatchId, ready, toast, auth, setAuth, chatOpen, setChatOpen, rev, refreshMe, news, setNews, signOut, toasts }}>

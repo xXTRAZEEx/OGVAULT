@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useApp } from '../App';
 import { ago, format, useNow, withZone } from '../format';
-import { Amount, Avatar, Name, PageHead, Token, MatchmakingClosed } from '../ui';
+import { Amount, Avatar, Name, PageHead, Token } from '../ui';
 
 export function Home({ missing = false }) {
   const { rev, setAuth } = useApp();
@@ -22,9 +22,6 @@ export function Home({ missing = false }) {
   }
   if (error) return <p className="error">{error}</p>;
   if (!data) return <p className="muted">Opening the vault…</p>;
-  if (data.matchmaking && data.matchmaking.enabled === false) {
-    return <MatchmakingClosed reason={data.matchmaking.reason} />;
-  }
 
   return (
     <div className="home">
