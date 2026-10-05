@@ -23,13 +23,11 @@ export function Match() {
 
   function showMatch(next) {
     if (!next) return;
-    const settled = next.status === 'done';
-    if (watch.current === 'live' && settled) {
-      watch.current = 'left';
-      navigate('/play');
+    if (next.rematch?.matchId && next.rematch.matchId !== id) {
+      navigate(`/match/${next.rematch.matchId}`);
       return;
     }
-    if (watch.current == null) watch.current = settled ? 'history' : 'live';
+    if (watch.current == null) watch.current = next.status === 'done' ? 'history' : 'live';
     setMatch(next);
   }
 
@@ -61,7 +59,7 @@ export function Match() {
       if (data.user) setMe(data.user);
       if (data.match) showMatch(data.match);
       if (note) toast(note);
-      if (path.endsWith('/rematch') && data.match) navigate(`/match/${data.match.id}`);
+      if (path.endsWith('/rematch') && data.match && data.match.id !== id) navigate(`/match/${data.match.id}`);
       if (path.endsWith('/leave') || path.endsWith('/forfeit') || path.endsWith('/report')) refreshMe();
     } catch (err) {
       toast(err.message, 'bad');
@@ -101,6 +99,7 @@ function Listing({ match, me, act, id, toast, setAuth }) {
         <div>
           <p>Created {created}</p>
           <h1>{match.mode}</h1>
+          <button className="copy-link" type="button" onClick={share}>Copy link</button>
         </div>
         <div className="stake">
           <div>
@@ -113,7 +112,6 @@ function Listing({ match, me, act, id, toast, setAuth }) {
             <Amount value={match.pot} />
           </div>
         </div>
-        <button className="iconbtn share" onClick={share} aria-label="Copy lobby link">↗</button>
       </section>
 
       <div className="lobby-meta">
@@ -176,7 +174,14 @@ function Listing({ match, me, act, id, toast, setAuth }) {
           {youIn && (phase === 'readyup' || phase === 'playing' || phase === 'result') && (
             <Forfeit onForfeit={() => act(`/api/matches/${id}/forfeit`, {}, 'Forfeit recorded.')} />
           )}
-          {phase === 'completed' && <Done match={match} me={me} onRematch={() => act(`/api/matches/${id}/rematch`)} />}
+          {phase === 'completed' && (
+            <Done
+              match={match}
+              me={me}
+              onRematch={() => act(`/api/matches/${id}/rematch`, {}, 'Rematch sent.')}
+              onDecline={() => act(`/api/matches/${id}/rematch/decline`, {}, 'Rematch declined.')}
+            />
+          )}
           <dl className="game-info">
             <div><dt>Game info</dt><dd>{match.project}</dd></div>
             <div><dt>Status</dt><dd>{STEPS[step]?.[1] || phase}</dd></div>
@@ -276,7 +281,7 @@ function Report({ match, me, toast, onPick, onReview }) {
       : mine
         ? 'Your report is locked.'
         : '';
-  const stillApart = !!match.report?.canReview;
+  const stillApart = !!match.report?.conflict && !match.report?.reviewSent;
   const reportDeadline = match.report?.reportDeadline || 0;
   const oneVote = (!!mine) !== (!!match.report?.theirs);
   const reportLeft = Math.max(0, reportDeadline - now);
@@ -405,15 +410,28 @@ function ClipRow({ label, clip, src }) {
   );
 }
 
-function Done({ match, me, onRematch }) {
+function Done({ match, me, onRematch, onDecline }) {
   const won = match.winnerId && match.winnerId === me?.id;
   const tie = !match.winnerId;
   const winner = [match.host, match.guest].find((user) => user?.id === match.winnerId);
+  const other = me?.id === match.host?.id ? match.guest : match.host;
+  const ask = match.rematch;
+  const waiting = ask?.fromId && ask.fromId === me?.id;
+  const incoming = ask?.fromId && ask.fromId !== me?.id;
   return (
     <div className="report">
       <p>{tie ? 'Split. Entries refunded.' : won ? 'You took the prize.' : winner ? `${winner.username} took the prize.` : 'Lobby closed.'}</p>
-      {!tie && !match.practice && <p className="payout"><Amount value={match.payout} /> paid, after the 15% fee.</p>}
-      <button className="btn" onClick={onRematch}>Run it back</button>
+      {!tie && !match.practice && <p className="payout"><Amount value={match.payout} /> paid, after the 20% fee.</p>}
+      {waiting && <p className="muted">Waiting for {other?.username || 'the other player'} to accept the rematch.</p>}
+      {incoming && <p>{ask.username} wants a rematch.</p>}
+      {incoming ? (
+        <>
+          <button className="btn" onClick={onRematch}>Accept rematch</button>
+          <button className="btn ghost" onClick={onDecline}>Decline</button>
+        </>
+      ) : (
+        <button className="btn" disabled={waiting} onClick={onRematch}>{waiting ? 'Rematch sent' : 'Run it back'}</button>
+      )}
       <Link className="btn ghost" to="/play">Listings</Link>
     </div>
   );

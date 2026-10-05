@@ -60,7 +60,7 @@ export function Play() {
       <section className="panel create">
         <div>
           <h2>Create a listing</h2>
-          <p>Your entry locks when the lobby opens. Winner takes the pot minus a 15% fee. The match itself is played on the project you pick.</p>
+          <p>Your entry locks when the lobby opens. Winner takes the pot minus a 20% fee. The match itself is played on the project you pick.</p>
           <label>Project
             <select value={project} onChange={(event) => setProject(event.target.value)}>
               {PROJECTS.map((item) => <option key={item}>{item}</option>)}

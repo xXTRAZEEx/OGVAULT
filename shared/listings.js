@@ -4,7 +4,7 @@ export const REGIONS = ['EU', 'NA'];
 export const PLATFORMS = ['PC'];
 export const MIN_ENTRY = 1;
 export const LISTING_MS = 30 * 60 * 1000;
-export const MATCH_FEE = 0.15;
+export const MATCH_FEE = 0.2;
 
 export function listingFee(entry) {
   const amount = Number(entry);

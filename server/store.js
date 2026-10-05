@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const file = path.join(__dirname, 'data.json');
 
-export const FEE = 0.05;
+export const FEE = 0.2;
 
 export const SHOP = [
   {

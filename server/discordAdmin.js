@@ -5,6 +5,7 @@ import {
   Client,
   EmbedBuilder,
   GatewayIntentBits,
+  PermissionFlagsBits,
   REST,
   Routes,
   SlashCommandBuilder,
@@ -25,10 +26,19 @@ import {
 import { blackjackBiasPercent, setBlackjackBias } from './blackjack.js';
 import { fail, load, rid, round, update } from './store.js';
 
+const REVIEWER_CHANNEL_ID = '1556086496207962122';
+const REVIEWER_ROLE_NAME = 'Reviewer';
+const REVIEWER_COLOR = 0x57f287;
+const REVIEWER_PERMISSIONS = [PermissionFlagsBits.ReadMessageHistory];
+
+function adminOnly(builder) {
+  return builder.setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+}
+
 const commands = [
-  new SlashCommandBuilder()
+  adminOnly(new SlashCommandBuilder()
     .setName('tournament')
-    .setDescription('Create a site tournament')
+    .setDescription('Create a site tournament'))
     .addSubcommand((sub) =>
       sub
         .setName('create')
@@ -43,12 +53,15 @@ const commands = [
         .addNumberOption((option) => option.setName('second').setDescription('2nd place prize in tokens').setRequired(true).setMinValue(0))
         .addNumberOption((option) => option.setName('third').setDescription('3rd place prize in tokens').setRequired(true).setMinValue(0))
     ),
-  new SlashCommandBuilder()
+  adminOnly(new SlashCommandBuilder()
     .setName('clearchat')
-    .setDescription("Clear the site's public Live Chat"),
-  new SlashCommandBuilder()
+    .setDescription("Clear the site's public Live Chat")),
+  adminOnly(new SlashCommandBuilder()
+    .setName('purge')
+    .setDescription('Delete every message in this Discord channel')),
+  adminOnly(new SlashCommandBuilder()
     .setName('blackjack')
-    .setDescription('Blackjack house settings')
+    .setDescription('Blackjack house settings'))
     .addSubcommand((sub) =>
       sub
         .setName('bias')
@@ -62,27 +75,27 @@ const commands = [
             .setMaxValue(100)
         )
     ),
-  new SlashCommandBuilder()
+  adminOnly(new SlashCommandBuilder()
     .setName('ban')
     .setDescription('Ban a site account from login and matchmaking')
     .addStringOption((option) =>
       option.setName('username').setDescription('Site username or Discord username').setRequired(true).setMaxLength(64)
     )
-    .addNumberOption((option) => option.setName('hours').setDescription('Ban length in hours').setRequired(true).setMinValue(0.01)),
-  new SlashCommandBuilder()
+    .addNumberOption((option) => option.setName('hours').setDescription('Ban length in hours').setRequired(true).setMinValue(0.01))),
+  adminOnly(new SlashCommandBuilder()
     .setName('unban')
     .setDescription('Clear a site ban')
     .addStringOption((option) =>
       option.setName('username').setDescription('Site username or Discord username').setRequired(true).setMaxLength(64)
-    ),
-  new SlashCommandBuilder()
+    )),
+  adminOnly(new SlashCommandBuilder()
     .setName('matchmaking')
     .setDescription('Turn 1v1 matchmaking on or off')
     .addBooleanOption((option) => option.setName('enabled').setDescription('On allows new 1v1 listings').setRequired(true))
     .addNumberOption((option) =>
       option.setName('hours').setDescription('How long to keep matchmaking off').setRequired(false).setMinValue(0.01)
-    ),
-  new SlashCommandBuilder()
+    )),
+  adminOnly(new SlashCommandBuilder()
     .setName('reviewer')
     .setDescription('Add or remove a match reviewer')
     .addSubcommand((sub) =>
@@ -96,20 +109,20 @@ const commands = [
         .setName('remove')
         .setDescription('Stop a Discord user from awarding clip-dispute winners')
         .addUserOption((option) => option.setName('user').setDescription('Discord user').setRequired(true))
-    ),
-  new SlashCommandBuilder()
+    )),
+  adminOnly(new SlashCommandBuilder()
     .setName('balance')
     .setDescription('Show a site user token balance')
     .addStringOption((option) =>
       option.setName('username').setDescription('Site username or Discord username').setRequired(true).setMaxLength(64)
-    ),
-  new SlashCommandBuilder()
+    )),
+  adminOnly(new SlashCommandBuilder()
     .setName('inventory')
     .setDescription('Show a site user inventory and add or remove items')
     .addStringOption((option) =>
       option.setName('username').setDescription('Site username or Discord username').setRequired(true).setMaxLength(64)
-    ),
-  new SlashCommandBuilder()
+    )),
+  adminOnly(new SlashCommandBuilder()
     .setName('giveall')
     .setDescription('Give tokens or an inventory item to every registered user')
     .addSubcommand((sub) =>
@@ -131,12 +144,12 @@ const commands = [
             .setRequired(true)
             .addChoices(...INVENTORY_GRANTS.map((grant) => ({ name: grant.label, value: grant.key })))
         )
-    ),
-  new SlashCommandBuilder()
+    )),
+  adminOnly(new SlashCommandBuilder()
     .setName('withdrawals')
     .setDescription('List pending token withdrawal requests')
-    .addSubcommand((sub) => sub.setName('list').setDescription('Show pending withdrawals')),
-  new SlashCommandBuilder()
+    .addSubcommand((sub) => sub.setName('list').setDescription('Show pending withdrawals'))),
+  adminOnly(new SlashCommandBuilder()
     .setName('tokens')
     .setDescription('Add or remove site tokens')
     .addSubcommand((sub) =>
@@ -156,7 +169,7 @@ const commands = [
           option.setName('username').setDescription('Site username or Discord username').setRequired(true).setMaxLength(64)
         )
         .addNumberOption((option) => option.setName('amount').setDescription('Tokens to remove').setRequired(true).setMinValue(0.01))
-    ),
+    )),
 ].map((command) => command.toJSON());
 
 function adminIds() {
@@ -265,6 +278,16 @@ function isReviewer(userId) {
   return Array.isArray(reviewers) && reviewers.includes(userId);
 }
 
+let reviewerRoleId = '';
+
+function memberHasReviewerRole(interaction) {
+  if (isReviewer(interaction.user?.id)) return true;
+  const roles = interaction.member?.roles;
+  if (!reviewerRoleId || !roles) return false;
+  if (typeof roles.cache?.has === 'function') return roles.cache.has(reviewerRoleId);
+  return Array.isArray(roles) && roles.includes(reviewerRoleId);
+}
+
 function addReviewer(user) {
   const id = discordUserId(user);
   return update((state) => {
@@ -282,6 +305,87 @@ function removeReviewer(user) {
     if (index === -1) fail(404, 'That user is not a reviewer');
     reviewers.splice(index, 1);
     return { id };
+  });
+}
+
+const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;
+
+async function purgeChannel(channel) {
+  if (!channel?.messages?.fetch || !channel.bulkDelete) fail(400, 'Run this in a server text channel');
+  let removed = 0;
+  for (;;) {
+    const batch = await channel.messages.fetch({ limit: 100 });
+    if (!batch.size) break;
+    const recent = batch.filter((message) => Date.now() - message.createdTimestamp < TWO_WEEKS_MS);
+    const older = batch.filter((message) => Date.now() - message.createdTimestamp >= TWO_WEEKS_MS);
+    if (recent.size) {
+      const deleted = await channel.bulkDelete(recent, true);
+      removed += deleted.size;
+    }
+    for (const message of older.values()) {
+      await message.delete();
+      removed += 1;
+    }
+    if (batch.size < 100) break;
+  }
+  return removed;
+}
+
+async function reviewerGuild() {
+  const guildId = String(process.env.DISCORD_GUILD_ID || '').trim();
+  if (!bot || !/^\d{5,32}$/.test(guildId)) fail(400, 'Discord server is not configured');
+  return bot.guilds.fetch(guildId);
+}
+
+async function ensureReviewerRole(guild) {
+  await guild.roles.fetch();
+  let role = guild.roles.cache.find((item) => item.name === REVIEWER_ROLE_NAME);
+  if (!role) {
+    role = await guild.roles.create({
+      name: REVIEWER_ROLE_NAME,
+      color: REVIEWER_COLOR,
+      permissions: REVIEWER_PERMISSIONS,
+      reason: 'OGVAULT match reviewers',
+    });
+  } else if (
+    role.color !== REVIEWER_COLOR ||
+    role.permissions.has(PermissionFlagsBits.ManageEvents) ||
+    !role.permissions.has(PermissionFlagsBits.ReadMessageHistory)
+  ) {
+    await role.edit({
+      color: REVIEWER_COLOR,
+      permissions: REVIEWER_PERMISSIONS,
+    });
+  }
+  reviewerRoleId = role.id;
+  const channels = await guild.channels.fetch();
+  for (const channel of channels.values()) {
+    if (!channel?.permissionOverwrites) continue;
+    const home = channel.id === REVIEWER_CHANNEL_ID;
+    await channel.permissionOverwrites.edit(role, {
+      ViewChannel: home,
+      SendMessages: home,
+      ReadMessageHistory: true,
+      UseApplicationCommands: home,
+      ManageEvents: false,
+    });
+  }
+  return role;
+}
+
+async function grantReviewerAccess(userId) {
+  const guild = await reviewerGuild();
+  const role = await ensureReviewerRole(guild);
+  await guild.members.addRole({ user: userId, role, reason: 'OGVAULT reviewer' });
+}
+
+async function revokeReviewerAccess(userId) {
+  const guild = await reviewerGuild();
+  await guild.roles.fetch();
+  const role = guild.roles.cache.find((item) => item.name === REVIEWER_ROLE_NAME);
+  if (!role) return;
+  await guild.members.removeRole({ user: userId, role, reason: 'OGVAULT reviewer removed' }).catch((error) => {
+    if (error?.status !== 404) throw error;
   });
 }
 
@@ -521,7 +625,7 @@ function freezeAwardButtons(rows) {
 
 async function handleAward(interaction) {
   const userId = interaction.user.id;
-  if (!adminIds().includes(userId) && !isReviewer(userId)) {
+  if (!adminIds().includes(userId) && !memberHasReviewerRole(interaction)) {
     await interaction.reply({ content: 'You cannot use this', ephemeral: true });
     return;
   }
@@ -627,6 +731,12 @@ async function handleCommand(interaction) {
       });
       return;
     }
+    if (interaction.commandName === 'purge') {
+      await interaction.deferReply({ ephemeral: true });
+      const removed = await purgeChannel(interaction.channel);
+      await interaction.editReply({ content: `Deleted ${removed} message${removed === 1 ? '' : 's'} in this channel.` });
+      return;
+    }
     if (interaction.commandName === 'blackjack' && interaction.options.getSubcommand() === 'bias') {
       const result = readOrSetBlackjackBias(interaction.options.getInteger('percent'));
       await interaction.reply({ content: biasReply(result.percent, result.updated), ephemeral: true });
@@ -661,11 +771,16 @@ async function handleCommand(interaction) {
       const sub = interaction.options.getSubcommand();
       if (sub === 'add') {
         addReviewer(member);
-        await interaction.reply({ content: `${member.username} can award match winners.`, ephemeral: true });
+        await grantReviewerAccess(member.id);
+        await interaction.reply({
+          content: `${member.username} has the green Reviewer role and can only see the reviewer channel.`,
+          ephemeral: true,
+        });
         return;
       }
       if (sub === 'remove') {
         removeReviewer(member);
+        await revokeReviewerAccess(member.id);
         await interaction.reply({ content: `${member.username} is no longer a reviewer.`, ephemeral: true });
       }
       return;
@@ -813,6 +928,8 @@ export function startDiscordAdmin() {
       const rest = new REST({ version: '10' }).setToken(token);
       await rest.put(Routes.applicationGuildCommands(client.user.id, guildId), { body: commands });
       console.log('Discord admin slash commands registered');
+      await ensureReviewerRole(await client.guilds.fetch(guildId));
+      console.log('Reviewer role can read message history');
     } catch (error) {
       console.error('Discord slash command registration failed', error.status || '');
     }

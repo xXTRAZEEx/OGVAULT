@@ -180,12 +180,12 @@ export function HowTo() {
           <li>Create a lobby and pick the project, mode, region, platform, and first to. Your entry locks.</li>
           <li>The other player joins the guest seat. The private room is only for the two of you.</li>
           <li>Both press ready. Load into Eon or Retrac and play the 1v1.</li>
-          <li>Both report the same winner. That pays the pot minus 15%. Disagreeing reports stay open until you agree. An open lobby expires in 30 minutes and refunds the entry.</li>
+          <li>Both report the same winner. That pays the pot minus 20%. Disagreeing reports stay open until you agree. An open lobby expires in 30 minutes and refunds the entry.</li>
         </ol>
       </section>
       <section className="panel">
         <h2>Tokens</h2>
-        <p>Entry locks when you open or join a listing. Winner receives the pot minus 15%. A split sends both entries back. A player listing stays open until another account sits down.</p>
+        <p>Entry locks when you open or join a listing. Winner receives the pot minus 20%. A split sends both entries back. A player listing stays open until another account sits down.</p>
       </section>
       <section className="panel">
         <h2>Around the lobby</h2>

@@ -8,7 +8,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { DURATION, GOOD, buildChart, judge, scoreTimeline } from '../shared/chart.js';
-import { LISTING_MS, MODES, PLATFORMS, PROJECTS, REGIONS, parseEntry } from '../shared/listings.js';
+import { LISTING_MS, MODES, PLATFORMS, PROJECTS, REGIONS, listingPrize, parseEntry } from '../shared/listings.js';
 import { calendarWindow, safeTimeZone } from '../shared/time.js';
 import {
   buyItem,
@@ -37,6 +37,7 @@ import {
 } from './logic.js';
 import { blackjackView, dealBlackjack, doubleBlackjack, hitBlackjack, standBlackjack } from './blackjack.js';
 import { SHOP, fail, load, rid, round, update } from './store.js';
+import { assertCleanUsername, offensiveName } from './names.js';
 import { checkoutOrigin, createCoinCheckout, handleStripeWebhook } from './checkout.js';
 import { createNowInvoice, handleNowIpn } from './nowpayments.js';
 import { notifyWithdrawal, sendClipReview, setChatClearedHook, setReviewSettleHook, startDiscordAdmin } from './discordAdmin.js';
@@ -491,6 +492,7 @@ app.post(
     if (!age) fail(400, 'You need to confirm you are 18 or older');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, 'Enter a real email');
     if (!/^[a-zA-Z0-9]{3,12}$/.test(username)) fail(400, 'Username is 3–12 letters and numbers');
+    assertCleanUsername(username);
     if (password.length < 8 || password.length > 25 || !/[a-zA-Z]/.test(password) || !/\d/.test(password)) {
       fail(400, 'Password is 8–25 characters with a letter and a number');
     }
@@ -562,6 +564,7 @@ function vaultNameFromDiscord(state, discordUsername) {
   let base = String(discordUsername || '').replace(/[^a-zA-Z0-9]/g, '');
   if (base.length < 3) base = `${base}player`.slice(0, 12);
   base = base.slice(0, 12);
+  if (offensiveName(base)) return `p${crypto.randomBytes(4).toString('hex')}`.slice(0, 12);
   let name = base;
   for (let n = 0; n < 10000; n += 1) {
     if (n > 0) {
@@ -569,6 +572,7 @@ function vaultNameFromDiscord(state, discordUsername) {
       name = `${base.slice(0, Math.max(0, 12 - suffix.length))}${suffix}`;
     }
     if (!/^[a-zA-Z0-9]{3,12}$/.test(name)) continue;
+    if (offensiveName(name)) continue;
     if (!state.users.some((user) => user.username.toLowerCase() === name.toLowerCase())) return name;
   }
   return `p${crypto.randomBytes(4).toString('hex')}`.slice(0, 12);
@@ -718,6 +722,7 @@ app.post(
   route((req, res) => {
     const username = String(req.body.username || '').trim();
     if (!/^[a-zA-Z0-9]{3,12}$/.test(username)) fail(400, 'Username is 3–12 letters and numbers');
+    assertCleanUsername(username);
     const me = requireUser(req);
     const result = update((state) => {
       const user = state.users.find((item) => item.id === me.id);
@@ -1347,7 +1352,7 @@ app.post('/api/matches/:id/clip', (req, res) => {
         if (!reportsConflict(match)) fail(400, 'Both players have to disagree on the winner before uploading');
         match.clips = match.clips || {};
         match.clips[user.id] = { name: safeClipName(file.filename), size, at: Date.now() };
-        if (bothClipsIn(match) && !match.voteUnlockAt) match.voteUnlockAt = Date.now() + VOTE_LOCK_MS;
+        if (bothClipsIn(match)) match.voteUnlockAt = Date.now();
         return { match: matchDto(state, match, user.id) };
       });
       pingMatch(req.params.id);
@@ -1381,11 +1386,38 @@ app.get(
     const file = clipFile(match.id, ownerId);
     if (!clip || !fs.existsSync(file)) fail(404, 'No clip yet');
     const filename = safeClipName(clip.name).replace(/"/g, '');
-    res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-    fs.createReadStream(file).pipe(res);
+    sendVideo(req, res, file, filename);
   })
 );
+
+function sendVideo(req, res, file, filename) {
+  const size = fs.statSync(file).size;
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Content-Type', 'video/mp4');
+  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+  const range = String(req.headers.range || '');
+  if (!range) {
+    res.setHeader('Content-Length', size);
+    fs.createReadStream(file).pipe(res);
+    return;
+  }
+  const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+  if (!match) {
+    res.status(416).setHeader('Content-Range', `bytes */${size}`).end();
+    return;
+  }
+  let start = match[1] ? Number(match[1]) : 0;
+  let end = match[2] ? Number(match[2]) : size - 1;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= size) {
+    res.status(416).setHeader('Content-Range', `bytes */${size}`).end();
+    return;
+  }
+  end = Math.min(end, size - 1);
+  res.status(206);
+  res.setHeader('Content-Range', `bytes ${start}-${end}/${size}`);
+  res.setHeader('Content-Length', end - start + 1);
+  fs.createReadStream(file, { start, end }).pipe(res);
+}
 
 const reviewSending = new Set();
 
@@ -1433,8 +1465,8 @@ app.post(
     const components = [{
       type: 1,
       components: [
-        { type: 2, style: 1, custom_id: `ogreview:host:${match.id}`, label: awardLabel(host.username) },
-        { type: 2, style: 1, custom_id: `ogreview:guest:${match.id}`, label: awardLabel(guest.username) },
+        { type: 2, style: 3, custom_id: `ogreview:host:${match.id}`, label: awardLabel(host.username) },
+        { type: 2, style: 4, custom_id: `ogreview:guest:${match.id}`, label: awardLabel(guest.username) },
       ],
     }];
     const clipButtons = clips.filter((item) => discordAllowsButtonUrl(item.url));
@@ -1447,20 +1479,29 @@ app.post(
     const hostClaim = claimName(match, host, guest, (match.reports || {})[host.id]);
     const guestClaim = claimName(match, host, guest, (match.reports || {})[guest.id]);
     const description = [
-      `Match ${md(match.id) || 'unknown'}`,
-      `Project ${md(match.project || 'Eon')} · ${md(match.region || 'EU')}`,
-      `${md(host.username) || 'Host'} claimed ${md(hostClaim) || 'unknown'}`,
-      `${md(guest.username) || 'Guest'} claimed ${md(guestClaim) || 'unknown'}`,
+      'Both players claimed the win. Watch the clips, then award it once.',
       ...clipLines,
     ].join('\n').slice(0, 4096);
+    const field = (name, value) => ({ name, value: md(value) || '—', inline: true });
     reviewSending.add(match.id);
     try {
       await sendClipReview({
         embeds: [{
           title: 'Clip dispute',
-          color: 0x2b2d31,
+          color: 0x2f6bff,
           description,
-          footer: { text: 'Each award works once.' },
+          fields: [
+            field('Match', match.id),
+            field('Project', match.project || 'Eon'),
+            field('Region', match.region || 'EU'),
+            field('Host', host.username),
+            field('Host claimed', hostClaim),
+            field('Entry', String(match.entry)),
+            field('Guest', guest.username),
+            field('Guest claimed', guestClaim),
+            field('Prize', String(listingPrize(match.entry))),
+          ],
+          footer: { text: 'Green awards the host. Red awards the guest. Each award works once.' },
         }],
         components,
       });
@@ -1517,7 +1558,7 @@ app.get(
     const name = side === 'host' ? host.username : guest.username;
     res.type('html').send(reviewHtml(
       'Award the win',
-      `<p>Match ${htmlEscape(match.id)}. This awards the win to ${htmlEscape(name)}. The pot pays minus 15%.</p><form method="post"><button type="submit">Award the win to ${htmlEscape(name)}</button></form>`
+      `<p>Match ${htmlEscape(match.id)}. This awards the win to ${htmlEscape(name)}. The pot pays minus 20%.</p><form method="post"><button type="submit">Award the win to ${htmlEscape(name)}</button></form>`
     ));
   })
 );
@@ -1600,12 +1641,25 @@ app.post(
       const otherId = prev.hostId === user.id ? prev.guestId : prev.hostId;
       const other = state.users.find((item) => item.id === otherId);
       if (!other) fail(400, 'That player is no longer on the server');
+      if (prev.rematchId) {
+        const next = state.matches.find((item) => item.id === prev.rematchId);
+        if (next) return { match: matchDto(state, next, user.id), user: userDto(user, { self: true }) };
+      }
+      const ask = prev.rematchAsk;
+      if (!ask || ask.fromId === user.id) {
+        if (user.balance < prev.entry) fail(400, 'Not enough tokens for the same entry');
+        prev.rematchAsk = { fromId: user.id, at: Date.now() };
+        const note = pushMatchLine(prev, `${user.username} wants a rematch`);
+        return { match: matchDto(state, prev, user.id), user: userDto(user, { self: true }), note };
+      }
+      if (ask.fromId !== otherId) fail(400, 'That rematch request is no longer open');
       if (user.balance < prev.entry) fail(400, 'Not enough tokens for the same entry');
-      debit(state, user, prev.entry, 'entry', {});
+      if (other.balance < prev.entry) fail(400, `${other.username} does not have enough tokens`);
+      if (busy(state, user.id) || busy(state, other.id)) fail(400, 'Finish your open 1v1 before joining another');
+      debit(state, other, prev.entry, 'entry', {});
       const match = freshMatch({
-        host: user,
+        host: other,
         entry: prev.entry,
-        invitee: other.username,
         project: prev.project,
         mode: prev.mode,
         region: prev.region,
@@ -1613,9 +1667,32 @@ app.post(
         firstTo: prev.firstTo,
       });
       state.matches.unshift(match);
+      joinMatch(state, match, user);
+      prev.rematchId = match.id;
+      prev.rematchAsk = null;
       return { match: matchDto(state, match, user.id), user: userDto(user, { self: true }) };
     });
+    pingMatch(req.params.id);
     pingLobby();
+    res.json(result);
+  })
+);
+
+app.post(
+  '/api/matches/:id/rematch/decline',
+  route((req, res) => {
+    const me = requireUser(req);
+    const result = update((state) => {
+      const user = state.users.find((item) => item.id === me.id);
+      const prev = state.matches.find((item) => item.id === req.params.id);
+      if (!prev || prev.status !== 'done') fail(400, 'That match is finished');
+      if (prev.hostId !== user.id && prev.guestId !== user.id) fail(403, 'You were not in that match');
+      if (!prev.rematchAsk || prev.rematchAsk.fromId === user.id) fail(400, 'There is no rematch request to decline');
+      prev.rematchAsk = null;
+      const note = pushMatchLine(prev, `${user.username} declined the rematch`);
+      return { match: matchDto(state, prev, user.id), user: userDto(user, { self: true }), note };
+    });
+    pingMatch(req.params.id);
     res.json(result);
   })
 );

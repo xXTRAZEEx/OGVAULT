@@ -381,7 +381,7 @@ export function Wallet() {
   const withdrawFee = withdrawValue > 0 ? 2.5 : 0;
   const withdrawReceive = cents(Math.max(0, withdrawValue - withdrawFee));
   const tipValue = cents(tipAmount);
-  const tipFee = me?.vip ? 0 : cents(tipValue * 0.05);
+  const tipFee = me?.vip ? 0 : cents(tipValue * 0.2);
   const tipTotal = cents(tipValue + tipFee);
 
   if (!me) {
@@ -536,7 +536,7 @@ export function Wallet() {
               <strong className="huge"><Amount value={me.balance} /></strong>
             </div>
           </div>
-          <p className="callout">VIP players send tips fee-free. A 5% fee applies for non-VIP users.</p>
+          <p className="callout">VIP players send tips fee-free. A 20% fee applies for non-VIP users.</p>
           <form className="stack" onSubmit={async (event) => {
             event.preventDefault();
             try {

@@ -210,6 +210,13 @@ export function matchDto(state, match, viewerId) {
     forfeitId: match.forfeitId,
     bot: match.bot && live ? match.bot : match.bot ? { sparring: true } : null,
     sniped: !!(viewerId && match.sniped && match.sniped[viewerId]),
+    rematch: inRoom && match.status === 'done'
+      ? {
+          fromId: match.rematchAsk?.fromId || null,
+          username: state.users.find((item) => item.id === match.rematchAsk?.fromId)?.username || null,
+          matchId: match.rematchId || null,
+        }
+      : null,
     sparring: !!(host && host.npc) || !!(guest && guest.npc),
   };
 }
