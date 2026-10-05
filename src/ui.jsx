@@ -149,3 +149,13 @@ export function PageHead({ kicker, title, text, children }) {
     </div>
   );
 }
+
+export function MatchmakingClosed({ reason }) {
+  return (
+    <section className="matchmaking-off">
+      <img src="/logo.png" alt="OGVAULT" />
+      <h1>Matchmaking is disabled</h1>
+      {reason ? <p>{reason}</p> : null}
+    </section>
+  );
+}

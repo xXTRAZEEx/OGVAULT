@@ -2,8 +2,12 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ChannelType,
   Client,
   EmbedBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   GatewayIntentBits,
   PermissionFlagsBits,
   REST,
@@ -76,6 +80,14 @@ const commands = [
         )
     ),
   adminOnly(new SlashCommandBuilder()
+    .setName('give')
+    .setDescription('Give a Discord role to a member')
+    .addUserOption((option) => option.setName('user').setDescription('Discord user').setRequired(true))
+    .addRoleOption((option) => option.setName('role').setDescription('Role to give').setRequired(true))),
+  adminOnly(new SlashCommandBuilder()
+    .setName('stats')
+    .setDescription('Show live site numbers')),
+  adminOnly(new SlashCommandBuilder()
     .setName('ban')
     .setDescription('Ban a site account from login and matchmaking')
     .addStringOption((option) =>
@@ -92,23 +104,11 @@ const commands = [
     .setName('matchmaking')
     .setDescription('Turn 1v1 matchmaking on or off')
     .addBooleanOption((option) => option.setName('enabled').setDescription('On allows new 1v1 listings').setRequired(true))
+    .addStringOption((option) =>
+      option.setName('reason').setDescription('Shown on the site while matchmaking is off').setRequired(false).setMaxLength(200)
+    )
     .addNumberOption((option) =>
       option.setName('hours').setDescription('How long to keep matchmaking off').setRequired(false).setMinValue(0.01)
-    )),
-  adminOnly(new SlashCommandBuilder()
-    .setName('reviewer')
-    .setDescription('Add or remove a match reviewer')
-    .addSubcommand((sub) =>
-      sub
-        .setName('add')
-        .setDescription('Let a Discord user award clip-dispute winners')
-        .addUserOption((option) => option.setName('user').setDescription('Discord user').setRequired(true))
-    )
-    .addSubcommand((sub) =>
-      sub
-        .setName('remove')
-        .setDescription('Stop a Discord user from awarding clip-dispute winners')
-        .addUserOption((option) => option.setName('user').setDescription('Discord user').setRequired(true))
     )),
   adminOnly(new SlashCommandBuilder()
     .setName('balance')
@@ -262,17 +262,6 @@ function tokenAmount(raw) {
   return cents / 100;
 }
 
-function discordUserId(user) {
-  const id = String(user?.id || '');
-  if (!/^\d{5,32}$/.test(id)) fail(400, 'That user is not valid');
-  return id;
-}
-
-function reviewersOf(state) {
-  if (!Array.isArray(state.reviewers)) state.reviewers = [];
-  return state.reviewers;
-}
-
 function isReviewer(userId) {
   const reviewers = load().reviewers;
   return Array.isArray(reviewers) && reviewers.includes(userId);
@@ -286,26 +275,6 @@ function memberHasReviewerRole(interaction) {
   if (!reviewerRoleId || !roles) return false;
   if (typeof roles.cache?.has === 'function') return roles.cache.has(reviewerRoleId);
   return Array.isArray(roles) && roles.includes(reviewerRoleId);
-}
-
-function addReviewer(user) {
-  const id = discordUserId(user);
-  return update((state) => {
-    const reviewers = reviewersOf(state);
-    if (!reviewers.includes(id)) reviewers.push(id);
-    return { id };
-  });
-}
-
-function removeReviewer(user) {
-  const id = discordUserId(user);
-  return update((state) => {
-    const reviewers = reviewersOf(state);
-    const index = reviewers.indexOf(id);
-    if (index === -1) fail(404, 'That user is not a reviewer');
-    reviewers.splice(index, 1);
-    return { id };
-  });
 }
 
 const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;
@@ -329,12 +298,6 @@ async function purgeChannel(channel) {
     if (batch.size < 100) break;
   }
   return removed;
-}
-
-async function reviewerGuild() {
-  const guildId = String(process.env.DISCORD_GUILD_ID || '').trim();
-  if (!bot || !/^\d{5,32}$/.test(guildId)) fail(400, 'Discord server is not configured');
-  return bot.guilds.fetch(guildId);
 }
 
 async function ensureReviewerRole(guild) {
@@ -371,22 +334,6 @@ async function ensureReviewerRole(guild) {
     });
   }
   return role;
-}
-
-async function grantReviewerAccess(userId) {
-  const guild = await reviewerGuild();
-  const role = await ensureReviewerRole(guild);
-  await guild.members.addRole({ user: userId, role, reason: 'OGVAULT reviewer' });
-}
-
-async function revokeReviewerAccess(userId) {
-  const guild = await reviewerGuild();
-  await guild.roles.fetch();
-  const role = guild.roles.cache.find((item) => item.name === REVIEWER_ROLE_NAME);
-  if (!role) return;
-  await guild.members.removeRole({ user: userId, role, reason: 'OGVAULT reviewer removed' }).catch((error) => {
-    if (error?.status !== 404) throw error;
-  });
 }
 
 function listWithdrawals() {
@@ -518,15 +465,18 @@ function adjustTokens(username, rawAmount, direction) {
   });
 }
 
-function setMatchmaking(enabled, lengthHours) {
+function setMatchmaking(enabled, lengthHours, reason) {
+  const text = String(reason || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 200);
   return update((state) => {
     if (enabled) {
       state.matchmakingDisabledUntil = 0;
-      return { enabled: true, until: 0 };
+      state.matchmakingReason = '';
+      return { enabled: true, until: 0, reason: '' };
     }
-    const length = hours(lengthHours);
+    state.matchmakingReason = text;
+    const length = lengthHours == null ? 24 * 3650 : hours(lengthHours);
     state.matchmakingDisabledUntil = Date.now() + length * 60 * 60 * 1000;
-    return { enabled: false, until: state.matchmakingDisabledUntil };
+    return { enabled: false, until: state.matchmakingDisabledUntil, reason: text };
   });
 }
 
@@ -541,6 +491,45 @@ export function setReviewSettleHook(fn) {
 
 export function setChatClearedHook(fn) {
   afterChatCleared = typeof fn === 'function' ? fn : () => {};
+}
+
+let onlineCount = () => 0;
+
+export function setOnlineCount(fn) {
+  onlineCount = typeof fn === 'function' ? fn : () => 0;
+}
+
+function moneyText(value) {
+  return Number(round(value) || 0).toFixed(2);
+}
+
+function siteStatsEmbed() {
+  const state = load();
+  const users = (state.users || []).filter((user) => !user.npc);
+  const matches = state.matches || [];
+  const count = (statuses) => matches.filter((match) => statuses.includes(match.status)).length;
+  const games = Math.round(users.reduce((sum, user) => sum + (user.stats?.matches || 0), 0) / 2);
+  const tokens = users.reduce((sum, user) => sum + (user.balance || 0), 0);
+  const vip = users.filter((user) => user.vipUntil > Date.now()).length;
+  const banned = users.filter((user) => user.banUntil > Date.now()).length;
+  const pending = (state.withdrawals || []).filter((row) => row.status === 'pending');
+  const pendingPay = pending.reduce((sum, row) => sum + (row.payout == null ? row.amount || 0 : row.payout), 0);
+  return new EmbedBuilder()
+    .setTitle('OGVAULT live')
+    .setColor(0xf1c40f)
+    .addFields(
+      { name: 'Online now', value: String(onlineCount()), inline: true },
+      { name: 'Registered', value: String(users.length), inline: true },
+      { name: 'VIP', value: String(vip), inline: true },
+      { name: 'Open lobbies', value: String(count(['open', 'staging'])), inline: true },
+      { name: 'In a match', value: String(count(['playing', 'result'])), inline: true },
+      { name: 'Games played', value: String(games), inline: true },
+      { name: 'Tokens in wallets', value: moneyText(tokens), inline: true },
+      { name: 'Prizes paid', value: moneyText(state.prizes), inline: true },
+      { name: 'Pending withdrawals', value: `${pending.length} · ${moneyText(pendingPay)}`, inline: true },
+      { name: 'Banned', value: String(banned), inline: true },
+    )
+    .setTimestamp(new Date());
 }
 
 function biasReply(percent, updated) {
@@ -703,6 +692,236 @@ async function handleInventoryAdd(interaction) {
   await interaction.update(payload);
 }
 
+const TICKET_KINDS = {
+  bug: { label: 'Report a bug', description: 'Something on the site is broken', emoji: '🐞', color: 0xed4245 },
+  withdraw: { label: 'Withdrawal', description: 'A payout has not arrived', emoji: '💳', color: 0xf1c40f },
+  account: { label: 'Account issue', description: 'Login, ban, or account help', emoji: '👤', color: 0x5865f2 },
+  content: { label: 'Content creation', description: 'Apply to make content for OGVAULT', emoji: '🎬', color: 0xe84393 },
+};
+
+const TICKET_ACCESS = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles];
+
+async function ensureNamedRole(guild, name, color) {
+  const existing = await roleByName(guild, name);
+  if (existing) return existing;
+  return guild.roles.create({ name, color, hoist: true, mentionable: true, permissions: [], reason: 'OGVAULT role' });
+}
+
+async function ticketAccessRoles(guild) {
+  const helper = await ensureNamedRole(guild, 'Helper', 0xe67e22);
+  const creator = await ensureNamedRole(guild, 'Content Creator', 0xe84393);
+  const owner = await roleByName(guild, 'Owner');
+  return { helper, creator, owner };
+}
+
+async function allowTicketStaff(channel, roles) {
+  for (const role of roles) {
+    if (!role) continue;
+    await channel.permissionOverwrites.edit(role, {
+      ViewChannel: true,
+      SendMessages: true,
+      ReadMessageHistory: true,
+      AttachFiles: true,
+    });
+  }
+}
+
+async function syncTicketAccess(guild) {
+  const { helper, owner } = await ticketAccessRoles(guild);
+  const channels = await guild.channels.fetch();
+  const staff = [helper, owner].filter(Boolean);
+  for (const channel of channels.values()) {
+    const isTicket = channel.name === 'Tickets' || String(channel.topic || '').startsWith('ticket:');
+    if (!isTicket) continue;
+    await allowTicketStaff(channel, staff);
+  }
+}
+
+async function ticketCategory(guild) {
+  const channels = await guild.channels.fetch();
+  const existing = channels.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === 'Tickets');
+  if (existing) return existing;
+  const { helper, owner } = await ticketAccessRoles(guild);
+  return guild.channels.create({
+    name: 'Tickets',
+    type: ChannelType.GuildCategory,
+    permissionOverwrites: [
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      ...[owner, helper].filter(Boolean).map((role) => ({ id: role.id, allow: TICKET_ACCESS })),
+    ],
+  });
+}
+
+function ticketModal(kind) {
+  const choice = TICKET_KINDS[kind];
+  return new ModalBuilder()
+    .setCustomId(`ogvault:ticket:form:${kind}`)
+    .setTitle(choice.label.slice(0, 45))
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('detail')
+          .setLabel('Describe your issue')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(1000),
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('proof')
+          .setLabel('Proof')
+          .setPlaceholder('Clip link, screenshot link, or what you can show')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(1000),
+      ),
+    );
+}
+
+async function canCloseTicket(interaction, opener) {
+  if (interaction.user.id === opener || adminIds().includes(interaction.user.id)) return true;
+  const owner = await roleByName(interaction.guild, 'Owner');
+  const helper = await roleByName(interaction.guild, 'Helper');
+  const roles = interaction.member?.roles?.cache;
+  return !!roles && ((owner && roles.has(owner.id)) || (helper && roles.has(helper.id)));
+}
+
+function ticketCard({ choice, detail, proof, account, username }) {
+  return new EmbedBuilder()
+    .setAuthor({ name: 'OGVAULT Support' })
+    .setTitle(`${choice.emoji}  ${choice.label}`)
+    .setColor(choice.color)
+    .setDescription(detail)
+    .addFields(
+      { name: 'Vault account', value: account, inline: true },
+      { name: 'Opened by', value: username, inline: true },
+      { name: 'Proof', value: proof },
+    )
+    .setFooter({ text: 'Reply in this channel. Close the ticket when it is finished.' })
+    .setTimestamp(new Date());
+}
+
+async function handleTicket(interaction, id) {
+  const guild = interaction.guild;
+  if (id === 'ogvault:ticket:close') {
+    const opener = String(interaction.channel?.topic || '').match(/^ticket:(\d+)$/)?.[1];
+    if (!opener || !(await canCloseTicket(interaction, opener))) {
+      await interaction.reply({ content: 'You cannot close this ticket.', ephemeral: true });
+      return;
+    }
+    await interaction.reply({ content: 'Ticket closed.' });
+    await interaction.channel.delete('Ticket closed').catch(() => {});
+    return;
+  }
+  const kind = id.split(':').pop();
+  const choice = TICKET_KINDS[kind];
+  if (!choice) {
+    await interaction.reply({ content: 'Pick one of the issues in the list.', ephemeral: true });
+    return;
+  }
+  await interaction.deferReply({ ephemeral: true });
+  const channels = await guild.channels.fetch();
+  const topic = `ticket:${interaction.user.id}`;
+  const existing = channels.find((channel) => channel.topic === topic);
+  if (existing) {
+    await interaction.editReply({ content: `You already have a ticket: ${existing}` });
+    return;
+  }
+  const { helper, owner } = await ticketAccessRoles(guild);
+  const category = await ticketCategory(guild);
+  const slug = String(interaction.user.username || 'user').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 16) || 'user';
+  const detail = interaction.fields.getTextInputValue('detail').slice(0, 1000);
+  const proof = interaction.fields.getTextInputValue('proof').slice(0, 1000);
+  const linked = load().users?.find((user) => !user.npc && String(user.discordId || '') === interaction.user.id);
+  const channel = await guild.channels.create({
+    name: `ticket-${slug}`,
+    type: ChannelType.GuildText,
+    parent: category.id,
+    topic,
+    permissionOverwrites: [
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      { id: interaction.user.id, allow: TICKET_ACCESS },
+      ...[owner, helper].filter(Boolean).map((role) => ({ id: role.id, allow: TICKET_ACCESS })),
+    ],
+  });
+  await channel.send({
+    content: `${interaction.user}`,
+    embeds: [
+      ticketCard({
+        choice,
+        detail,
+        proof,
+        account: linked?.username || 'Not linked',
+        username: interaction.user.username,
+      }),
+    ],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('ogvault:ticket:close').setLabel('Close ticket').setStyle(ButtonStyle.Danger),
+      ),
+    ],
+  });
+  await interaction.editReply({ content: `Ticket opened: ${channel}` });
+}
+
+async function roleByName(guild, name) {
+  const roles = await guild.roles.fetch();
+  return roles.find((role) => role.name === name) || null;
+}
+
+async function handleCommunityButton(interaction) {
+  const guild = interaction.guild;
+  if (!guild) {
+    await interaction.reply({ content: 'Use that in the server.', ephemeral: true });
+    return;
+  }
+  const id = String(interaction.customId || '');
+  if (id === 'ogvault:ticket:close') {
+    try {
+      await handleTicket(interaction, id);
+    } catch (error) {
+      const content = error?.status ? error.message : 'Could not open that ticket. The bot needs Manage Channels.';
+      if (interaction.deferred || interaction.replied) await interaction.editReply({ content }).catch(() => {});
+      else await interaction.reply({ content, ephemeral: true }).catch(() => {});
+    }
+    return;
+  }
+  if (id === 'ogvault:verify') {
+    const linked = load().users?.find((user) => !user.npc && String(user.discordId || '') === interaction.user.id);
+    if (!linked) {
+      await interaction.reply({
+        content: 'Sign in with Discord on https://ogvault.co.uk first, then press this again.',
+        ephemeral: true,
+      });
+      return;
+    }
+    const memberRole = await roleByName(guild, 'Member');
+    if (!memberRole) {
+      await interaction.reply({ content: 'The Member role is missing.', ephemeral: true });
+      return;
+    }
+    await interaction.member.roles.add(memberRole);
+    await interaction.reply({
+      content: `Linked as ${linked.username}. You can talk in the member channels now.`,
+      ephemeral: true,
+    });
+    return;
+  }
+  if (id === 'ogvault:region:na' || id === 'ogvault:region:eu') {
+    const pick = id.endsWith(':na') ? 'NA' : 'EU';
+    const other = pick === 'NA' ? 'EU' : 'NA';
+    const chosen = await roleByName(guild, pick);
+    const previous = await roleByName(guild, other);
+    if (!chosen) {
+      await interaction.reply({ content: 'That region role is missing.', ephemeral: true });
+      return;
+    }
+    if (previous) await interaction.member.roles.remove(previous).catch(() => {});
+    await interaction.member.roles.add(chosen);
+    await interaction.reply({ content: `Region set to ${pick}.`, ephemeral: true });
+  }
+}
+
 async function handleCommand(interaction) {
   const allowed = adminIds();
   if (!allowed.length) {
@@ -742,6 +961,27 @@ async function handleCommand(interaction) {
       await interaction.reply({ content: biasReply(result.percent, result.updated), ephemeral: true });
       return;
     }
+    if (interaction.commandName === 'stats') {
+      await interaction.reply({ embeds: [siteStatsEmbed()], ephemeral: true });
+      return;
+    }
+    if (interaction.commandName === 'give') {
+      const user = interaction.options.getUser('user');
+      const role = interaction.options.getRole('role');
+      if (!user || role.managed || role.id === interaction.guildId) {
+        await interaction.reply({ content: 'Pick a member and a normal role.', ephemeral: true });
+        return;
+      }
+      const botMember = await interaction.guild.members.fetchMe();
+      if (role.position >= botMember.roles.highest.position) {
+        await interaction.reply({ content: 'Move the bot role above that role, then try again.', ephemeral: true });
+        return;
+      }
+      await interaction.guild.members.addRole({ user: user.id, role, reason: 'OGVAULT /give' });
+      if (role.name === 'Helper') await syncTicketAccess(interaction.guild);
+      await interaction.reply({ content: `${user.username} now has ${role.name}.`, ephemeral: true });
+      return;
+    }
     if (interaction.commandName === 'ban') {
       const result = banAccount(interaction.options.getString('username'), interaction.options.getNumber('hours'));
       await interaction.reply({
@@ -757,32 +997,13 @@ async function handleCommand(interaction) {
     }
     if (interaction.commandName === 'matchmaking') {
       const enabled = interaction.options.getBoolean('enabled');
-      const result = setMatchmaking(enabled, interaction.options.getNumber('hours'));
+      const result = setMatchmaking(enabled, interaction.options.getNumber('hours'), interaction.options.getString('reason'));
       await interaction.reply({
         content: result.enabled
           ? 'Matchmaking is on.'
-          : `Matchmaking is off until <t:${Math.floor(result.until / 1000)}:f>.`,
+          : `Matchmaking is off${result.reason ? `: ${result.reason}` : ''}.`,
         ephemeral: true,
       });
-      return;
-    }
-    if (interaction.commandName === 'reviewer') {
-      const member = interaction.options.getUser('user');
-      const sub = interaction.options.getSubcommand();
-      if (sub === 'add') {
-        addReviewer(member);
-        await grantReviewerAccess(member.id);
-        await interaction.reply({
-          content: `${member.username} has the green Reviewer role and can only see the reviewer channel.`,
-          ephemeral: true,
-        });
-        return;
-      }
-      if (sub === 'remove') {
-        removeReviewer(member);
-        await revokeReviewerAccess(member.id);
-        await interaction.reply({ content: `${member.username} is no longer a reviewer.`, ephemeral: true });
-      }
       return;
     }
     if (interaction.commandName === 'balance') {
@@ -929,12 +1150,34 @@ export function startDiscordAdmin() {
       await rest.put(Routes.applicationGuildCommands(client.user.id, guildId), { body: commands });
       console.log('Discord admin slash commands registered');
       await ensureReviewerRole(await client.guilds.fetch(guildId));
+      await syncTicketAccess(await client.guilds.fetch(guildId));
       console.log('Reviewer role can read message history');
     } catch (error) {
       console.error('Discord slash command registration failed', error.status || '');
     }
   });
   client.on('interactionCreate', (interaction) => {
+    if (interaction.isStringSelectMenu() && interaction.customId === 'ogvault:ticket:pick') {
+      const kind = interaction.values?.[0];
+      if (!TICKET_KINDS[kind]) {
+        interaction.reply({ content: 'Pick one of the issues in the list.', ephemeral: true }).catch(() => {});
+        return;
+      }
+      interaction.showModal(ticketModal(kind)).catch(() => {});
+      return;
+    }
+    if (interaction.isModalSubmit() && String(interaction.customId || '').startsWith('ogvault:ticket:form:')) {
+      handleTicket(interaction, interaction.customId).catch(async (error) => {
+        const content = error?.status ? error.message : 'Could not open that ticket. The bot needs Manage Channels.';
+        if (interaction.deferred || interaction.replied) await interaction.editReply({ content }).catch(() => {});
+        else await interaction.reply({ content, ephemeral: true }).catch(() => {});
+      });
+      return;
+    }
+    if (interaction.isButton() && String(interaction.customId || '').startsWith('ogvault:')) {
+      handleCommunityButton(interaction).catch(() => {});
+      return;
+    }
     if (interaction.isButton() && String(interaction.customId || '').startsWith('ogcopy:')) {
       handleCopyWithdrawal(interaction).catch(() => {});
       return;

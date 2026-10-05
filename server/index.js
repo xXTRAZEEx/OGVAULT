@@ -40,7 +40,7 @@ import { SHOP, fail, load, rid, round, update } from './store.js';
 import { assertCleanUsername, offensiveName } from './names.js';
 import { checkoutOrigin, createCoinCheckout, handleStripeWebhook } from './checkout.js';
 import { createNowInvoice, handleNowIpn } from './nowpayments.js';
-import { notifyWithdrawal, sendClipReview, setChatClearedHook, setReviewSettleHook, startDiscordAdmin } from './discordAdmin.js';
+import { notifyWithdrawal, sendClipReview, setChatClearedHook, setOnlineCount, setReviewSettleHook, startDiscordAdmin } from './discordAdmin.js';
 import {
   consumeDiscordState,
   createDiscordState,
@@ -287,6 +287,7 @@ function homePayload(viewer, timeZone) {
       duels: fresh.users.reduce((sum, user) => sum + (user.stats.matches || 0), 0),
       online: sockets.size,
     },
+    matchmaking: matchmakingStatus(fresh),
     potw: potwDto(fresh),
     matches: fresh.matches
       .filter((match) => match.status === 'open' && !match.invitee)
@@ -462,10 +463,15 @@ function assertAccountOpen(user) {
   if (user && user.banUntil > Date.now()) fail(403, 'This account is banned');
 }
 
+function matchmakingStatus(state) {
+  const until = state.matchmakingDisabledUntil || 0;
+  const enabled = until <= Date.now();
+  return { enabled, reason: enabled ? '' : String(state.matchmakingReason || '') };
+}
+
 function assertMatchmakingOpen(state) {
-  if ((state.matchmakingDisabledUntil || 0) > Date.now()) {
-    fail(403, 'Matchmaking is turned off');
-  }
+  const status = matchmakingStatus(state);
+  if (!status.enabled) fail(403, status.reason || 'Matchmaking is turned off');
 }
 
 function assertPlay(user) {
@@ -898,7 +904,7 @@ app.get(
       .filter((match) => !match.invitee || match.hostId === viewer?.id || match.invitee === viewer?.username)
       .map((match) => matchDto(state, match, viewer?.id))
       .sort((a, b) => b.createdAt - a.createdAt);
-    res.json({ matches });
+    res.json({ matches, matchmaking: matchmakingStatus(state) });
   })
 );
 
@@ -2229,6 +2235,7 @@ server.listen(port, host, () => {
     pingLobby();
   });
   setChatClearedHook(() => broadcast({ type: 'chatclear' }));
+  setOnlineCount(() => sockets.size);
   startDiscordAdmin();
 });
 
