@@ -133,6 +133,10 @@ const commands = [
         )
     ),
   new SlashCommandBuilder()
+    .setName('withdrawals')
+    .setDescription('List pending token withdrawal requests')
+    .addSubcommand((sub) => sub.setName('list').setDescription('Show pending withdrawals')),
+  new SlashCommandBuilder()
     .setName('tokens')
     .setDescription('Add or remove site tokens')
     .addSubcommand((sub) =>
@@ -279,6 +283,23 @@ function removeReviewer(user) {
     reviewers.splice(index, 1);
     return { id };
   });
+}
+
+function listWithdrawals() {
+  const state = load();
+  const rows = (state.withdrawals || []).filter((row) => row.status === 'pending').slice(0, 15);
+  if (!rows.length) return 'No pending withdrawals.';
+  return rows
+    .map((row) => {
+      const user = state.users.find((item) => item.id === row.userId);
+      const name = user?.username || 'unknown';
+      const amount = round(row.amount);
+      const fee = row.fee == null ? 0 : round(row.fee);
+      const payout = row.payout == null ? amount : round(row.payout);
+      return `${name}: ${amount} withdrawn, fee ${fee}, pay ${payout} via ${row.method}`;
+    })
+    .join('\n')
+    .slice(0, 1900);
 }
 
 function userBalance(username) {
@@ -671,6 +692,10 @@ async function handleCommand(interaction) {
       });
       return;
     }
+    if (interaction.commandName === 'withdrawals' && interaction.options.getSubcommand() === 'list') {
+      await interaction.reply({ content: listWithdrawals(), ephemeral: true });
+      return;
+    }
     if (interaction.commandName === 'tokens') {
       const username = interaction.options.getString('username');
       const amount = interaction.options.getNumber('amount');
@@ -685,6 +710,87 @@ async function handleCommand(interaction) {
     const content = error.status ? error.message : 'That command failed';
     if (interaction.replied || interaction.deferred) return;
     await interaction.reply({ content, ephemeral: true });
+  }
+}
+
+const WITHDRAW_CHANNELS = {
+  crypto: 'DISCORD_WITHDRAW_CRYPTO_CHANNEL_ID',
+  paypal: 'DISCORD_WITHDRAW_PAYPAL_CHANNEL_ID',
+  bank: 'DISCORD_WITHDRAW_BANK_CHANNEL_ID',
+};
+
+function destinationText(method, destination) {
+  const dest = destination || {};
+  if (method === 'paypal') return dest.email || '—';
+  if (method === 'crypto') return `${dest.network || 'Crypto'}\n${dest.address || '—'}`;
+  return `${dest.accountName || '—'}\n${dest.accountNumber || '—'} · ${dest.sortCode || '—'}`;
+}
+
+export async function notifyWithdrawal({ username, method, amount, fee, payout, destination }) {
+  if (!bot || botFailed) return;
+  const key = WITHDRAW_CHANNELS[String(method || '').toLowerCase()];
+  const channelId = String((key && process.env[key]) || '').trim();
+  if (!/^\d{5,32}$/.test(channelId)) return;
+  const embed = new EmbedBuilder()
+    .setTitle(`${method} withdrawal`)
+    .setColor(0x7aa2ff)
+    .addFields(
+      { name: 'Player', value: username || 'Unknown', inline: true },
+      { name: 'Amount', value: String(amount), inline: true },
+      { name: 'Fee', value: String(fee), inline: true },
+      { name: 'Pay out', value: String(payout), inline: true },
+      { name: 'Send to', value: destinationText(method, destination) },
+    );
+  const methodName = String(method || '').toLowerCase();
+  const row = new ActionRowBuilder();
+  if (methodName === 'crypto') {
+    row.addComponents(new ButtonBuilder().setCustomId('ogcopy:crypto').setLabel('Copy address').setStyle(ButtonStyle.Secondary));
+  } else if (methodName === 'paypal') {
+    row.addComponents(new ButtonBuilder().setCustomId('ogcopy:paypal').setLabel('Copy email').setStyle(ButtonStyle.Secondary));
+  }
+  try {
+    const channel = await bot.channels.fetch(channelId);
+    await channel.send({ embeds: [embed], components: row.components.length ? [row] : [] });
+  } catch {
+    console.error('Could not post a withdrawal alert');
+  }
+}
+
+function copyValueFromEmbed(interaction) {
+  const field = interaction.message?.embeds?.[0]?.fields?.find((item) => item.name === 'Send to');
+  const lines = String(field?.value || '').split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('TEST'));
+  if (interaction.customId === 'ogcopy:paypal') return lines.find((line) => line.includes('@')) || '';
+  return lines.find((line) => !['Solana', 'Ethereum', 'Bitcoin'].includes(line)) || '';
+}
+
+export async function handleCopyWithdrawal(interaction) {
+  const value = copyValueFromEmbed(interaction);
+  if (!value) {
+    await interaction.reply({ content: 'Nothing to copy on that alert.', ephemeral: true });
+    return;
+  }
+  await interaction.reply({ content: `\`${value}\``, ephemeral: true });
+}
+
+export async function notifyPayment({ method, username, tokens, amount, status, reference }) {
+  if (!bot || botFailed) return;
+  const channelId = String(process.env.DISCORD_PAYMENTS_CHANNEL_ID || '').trim();
+  if (!/^\d{5,32}$/.test(channelId)) return;
+  const paid = status === 'paid' || status === 'finished';
+  const embed = new EmbedBuilder()
+    .setTitle(paid ? `${method} payment received` : `${method} payment ${status || 'update'}`)
+    .setColor(paid ? 0x3ddc84 : 0xe2b340)
+    .addFields(
+      { name: 'Player', value: username || 'Unknown', inline: true },
+      { name: 'Tokens', value: String(tokens ?? 0), inline: true },
+      { name: 'Amount', value: amount || '—', inline: true },
+      { name: 'Reference', value: reference || '—' },
+    );
+  try {
+    const channel = await bot.channels.fetch(channelId);
+    await channel.send({ embeds: [embed] });
+  } catch {
+    console.error('Could not post a payment alert');
   }
 }
 
@@ -712,6 +818,10 @@ export function startDiscordAdmin() {
     }
   });
   client.on('interactionCreate', (interaction) => {
+    if (interaction.isButton() && String(interaction.customId || '').startsWith('ogcopy:')) {
+      handleCopyWithdrawal(interaction).catch(() => {});
+      return;
+    }
     if (interaction.isButton() && String(interaction.customId || '').startsWith('ogreview:')) {
       handleAward(interaction).catch(() => {});
       return;

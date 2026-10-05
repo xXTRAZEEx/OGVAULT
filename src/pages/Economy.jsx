@@ -348,7 +348,7 @@ export function Wallet() {
     if (!me || (checkout !== 'success' && checkout !== 'cancel')) return;
     if (checkout === 'cancel') toast('Checkout cancelled. No tokens were added.');
     else {
-      toast('Payment received. Tokens are added when Stripe confirms the checkout.');
+      toast('Payment received. Tokens are added when the payment is confirmed.');
       load().catch((err) => toast(err.message, 'bad'));
     }
     setParams({}, { replace: true });
@@ -358,13 +358,13 @@ export function Wallet() {
     setParams(next === 'deposit' ? {} : { tab: next }, { replace: true });
   }
 
-  async function buy(raw) {
+  async function buy(raw, method) {
     const value = cents(raw);
     if (value < 1) { toast('Enter a deposit amount', 'bad'); return; }
     if (buying) return;
     setBuying(true);
     try {
-      const data = await api('/api/wallet/checkout', { method: 'POST', body: { amount: value } });
+      const data = await api('/api/wallet/checkout', { method: 'POST', body: { amount: value, method } });
       if (!data.url) {
         toast('Checkout is not configured', 'bad');
         setBuying(false);
@@ -378,6 +378,8 @@ export function Wallet() {
   }
 
   const withdrawValue = cents(amount);
+  const withdrawFee = withdrawValue > 0 ? 2.5 : 0;
+  const withdrawReceive = cents(Math.max(0, withdrawValue - withdrawFee));
   const tipValue = cents(tipAmount);
   const tipFee = me?.vip ? 0 : cents(tipValue * 0.05);
   const tipTotal = cents(tipValue + tipFee);
@@ -409,6 +411,7 @@ export function Wallet() {
               </span>
             </label>
             <button className="btn" type="button" disabled={buying} onClick={() => buy(custom)}>Deposit</button>
+            <button className="btn ghost" type="button" disabled={buying} onClick={() => buy(custom, 'crypto')}>Pay with crypto</button>
           </div>
           <ChargeLines price={custom} />
           <div className="pack-grid">
@@ -416,11 +419,14 @@ export function Wallet() {
               <article key={pack.coins} className={`panel pack ${pack.tone}`}>
                 <h3><Token size={22} /> {pack.coins} Coins</h3>
                 <ChargeLines price={pack.price} />
-                <button className="btn" type="button" disabled={buying} onClick={() => buy(pack.coins)}>Purchase</button>
+                <div className="pack-actions">
+                  <button className="btn" type="button" disabled={buying} onClick={() => buy(pack.coins)}>Purchase</button>
+                  <button className="btn ghost" type="button" disabled={buying} onClick={() => buy(pack.coins, 'crypto')}>Pay with crypto</button>
+                </div>
               </article>
             ))}
           </div>
-          <p className="muted">One coin is one pound. The account is credited the coin count only, after the payment is confirmed.</p>
+          <p className="muted">One coin is one pound. Card checkout charges that pack in GBP with £2.30 tax included. Pay with crypto opens a NOWPayments page with a QR code and the address. Tokens are added after the payment is confirmed.</p>
         </div>
       )}
 
@@ -431,7 +437,7 @@ export function Wallet() {
               <span>Available balance</span>
               <strong className="huge"><Amount value={me.balance} /></strong>
             </div>
-            <p>Minimum withdrawal is 15. Withdrawals take 24 hours.</p>
+            <p>Minimum withdrawal is 15. A 2.5 fee is taken from that amount. Withdrawals take 24 hours.</p>
           </div>
           <form className="stack" onSubmit={async (event) => {
             event.preventDefault();
@@ -504,7 +510,7 @@ export function Wallet() {
               <input type="checkbox" checked={notify} onChange={(event) => setNotify(event.target.checked)} />
               I want to receive an email notification when the withdrawal is processed.
             </label>
-            <p className="receive">You receive <strong>{gbp(withdrawValue)}</strong></p>
+            <p className="receive">Fee <strong>{gbp(withdrawFee)}</strong> · You receive <strong>{gbp(withdrawReceive)}</strong></p>
             <button className="btn" type="submit">Withdraw</button>
           </form>
           {!!withdrawals.length && (
@@ -514,7 +520,7 @@ export function Wallet() {
                 <div className="tr tx" key={row.id}>
                   <span>{row.method} · {destinationLine(row)}{row.notify ? ' · email' : ''}</span>
                   <span className="muted">{row.status === 'pending' ? dueLabel(row.readyAt, now) : 'Processed'}</span>
-                  <span className="down"><Amount value={-row.amount} /></span>
+                  <span className="down"><Amount value={-row.amount} />{row.payout != null ? <> · receive <Amount value={row.payout} /></> : null}</span>
                 </div>
               ))}
             </div>

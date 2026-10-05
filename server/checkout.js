@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import Stripe from 'stripe';
 import { PURCHASE_TAX_PENCE, chargePence, creditPaidCheckout } from './logic.js';
+import { notifyPayment } from './discordAdmin.js';
 import { fail, update } from './store.js';
 
 const letters = 'abcdefghijklmnopqrstuvwxyz';
@@ -55,6 +56,7 @@ export async function createCoinCheckout({ user, amount, origin }) {
   const stripe = requireCheckout();
   const charged = chargePence(amount);
   const coinsLabel = Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
+  const taxLabel = `Tax included £${(PURCHASE_TAX_PENCE / 100).toFixed(2)}`;
   try {
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
@@ -66,6 +68,8 @@ export async function createCoinCheckout({ user, amount, origin }) {
         userId: user.id,
         tokens: String(amount),
         amountPence: String(charged),
+        channel: 'card',
+        username: user.username,
       },
       line_items: [
         {
@@ -75,7 +79,7 @@ export async function createCoinCheckout({ user, amount, origin }) {
             unit_amount: charged,
             product_data: {
               name: `${coinsLabel} Coins`,
-              description: `Tax included £${(PURCHASE_TAX_PENCE / 100).toFixed(2)}`,
+              description: taxLabel,
             },
           },
         },
@@ -100,8 +104,18 @@ export function handleStripeWebhook(rawBody, signature) {
     fail(400, 'Invalid Stripe signature');
   }
   if (event.type !== 'checkout.session.completed') return { received: true };
-  update((state) => {
-    creditPaidCheckout(state, event.data.object);
-  });
+  const session = event.data.object;
+  const result = update((state) => creditPaidCheckout(state, session));
+  if (result.credited > 0) {
+    const pounds = (Number(session.amount_total) / 100).toFixed(2);
+    notifyPayment({
+      method: 'Card',
+      username: result.username || session.metadata?.username,
+      tokens: result.credited,
+      amount: `£${pounds}`,
+      status: 'paid',
+      reference: String(session.id || ''),
+    }).catch(() => {});
+  }
   return { received: true };
 }

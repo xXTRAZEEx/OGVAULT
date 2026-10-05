@@ -38,7 +38,8 @@ import {
 import { blackjackView, dealBlackjack, doubleBlackjack, hitBlackjack, standBlackjack } from './blackjack.js';
 import { SHOP, fail, load, rid, round, update } from './store.js';
 import { checkoutOrigin, createCoinCheckout, handleStripeWebhook } from './checkout.js';
-import { sendClipReview, setChatClearedHook, setReviewSettleHook, startDiscordAdmin } from './discordAdmin.js';
+import { createNowInvoice, handleNowIpn } from './nowpayments.js';
+import { notifyWithdrawal, sendClipReview, setChatClearedHook, setReviewSettleHook, startDiscordAdmin } from './discordAdmin.js';
 import {
   consumeDiscordState,
   createDiscordState,
@@ -1522,7 +1523,7 @@ app.get(
     const name = side === 'host' ? host.username : guest.username;
     res.type('html').send(reviewHtml(
       'Award the win',
-      `<p>Match ${htmlEscape(match.id)}. This awards the win to ${htmlEscape(name)}. The pot pays minus 5%.</p><form method="post"><button type="submit">Award the win to ${htmlEscape(name)}</button></form>`
+      `<p>Match ${htmlEscape(match.id)}. This awards the win to ${htmlEscape(name)}. The pot pays minus 15%.</p><form method="post"><button type="submit">Award the win to ${htmlEscape(name)}</button></form>`
     ));
   })
 );
@@ -1649,12 +1650,18 @@ app.post(
     const user = state.users.find((item) => item.id === me.id);
     if (!user) fail(401, 'Sign in again');
     const amount = purchaseAmount(req.body?.amount);
-    const session = await createCoinCheckout({
-      user,
-      amount,
-      origin: checkoutOrigin(req),
-    });
+    const origin = checkoutOrigin(req);
+    const session = req.body?.method === 'crypto'
+      ? await createNowInvoice({ user, amount, origin })
+      : await createCoinCheckout({ user, amount, origin });
     res.json(session);
+  })
+);
+
+app.post(
+  '/api/nowpayments/ipn',
+  route(async (req, res) => {
+    res.json(await handleNowIpn(req.body || {}, req.get('x-nowpayments-sig')));
   })
 );
 
@@ -1667,6 +1674,15 @@ app.post(
       const withdrawal = requestWithdrawal(state, user, req.body || {});
       return { ...walletSnapshot(state, user), withdrawal: { ...withdrawal, destination: withdrawal.destination } };
     });
+    const row = result.withdrawal;
+    notifyWithdrawal({
+      username: result.user?.username,
+      method: row.method,
+      amount: row.amount,
+      fee: row.fee,
+      payout: row.payout,
+      destination: row.destination,
+    }).catch(() => {});
     res.json(result);
   })
 );

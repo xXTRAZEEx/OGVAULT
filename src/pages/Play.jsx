@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { MODES, PLATFORMS, PROJECTS, REGIONS, parseEntry } from '../../shared/listings.js';
+import { MODES, PLATFORMS, PROJECTS, REGIONS, listingFee, listingPrize, parseEntry } from '../../shared/listings.js';
 import { api } from '../api';
 import { useApp } from '../App';
 import { MatchTable } from './Home';
@@ -60,7 +60,7 @@ export function Play() {
       <section className="panel create">
         <div>
           <h2>Create a listing</h2>
-          <p>Your entry locks when the lobby opens. Winner takes the pot minus a 5% fee. The match itself is played on the project you pick.</p>
+          <p>Your entry locks when the lobby opens. Winner takes the pot minus a 15% fee. The match itself is played on the project you pick.</p>
           <label>Project
             <select value={project} onChange={(event) => setProject(event.target.value)}>
               {PROJECTS.map((item) => <option key={item}>{item}</option>)}
@@ -89,6 +89,7 @@ export function Play() {
               onChange={(event) => setEntry(event.target.value)}
             />
           </label>
+          <p className="callout">Fee <Amount value={listingFee(parseEntry(entry) || 0)} /> · Prize <Amount value={listingPrize(parseEntry(entry) || 0)} /></p>
           {error && <p className="error">{error}</p>}
           <button className="btn" onClick={create}>Create listing · <Amount value={parseEntry(entry) || 0} /></button>
         </div>

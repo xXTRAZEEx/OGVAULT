@@ -6,7 +6,7 @@ import {
   scoreTimeline,
   simulateBot,
 } from '../shared/chart.js';
-import { LISTING_MS, listingPhase } from '../shared/listings.js';
+import { LISTING_MS, MATCH_FEE, listingPhase, listingPrize } from '../shared/listings.js';
 import { localWeek, nextSundayMidnight, safeTimeZone } from '../shared/time.js';
 import { discordAvatarUrl, discordName } from './discord.js';
 import { FEE, SHOP, fail, isVip, rid, round, winRate } from './store.js';
@@ -163,8 +163,8 @@ export function matchDto(state, match, viewerId) {
   return {
     id: match.id,
     entry: match.entry,
-    pot: round(match.entry * 2),
-    fee: FEE,
+    pot: listingPrize(match.entry),
+    fee: MATCH_FEE,
     practice: !!match.practice,
     status: match.status,
     phase: listingPhase(match),
@@ -400,7 +400,7 @@ export function resolveMatch(state, match, { forfeitId = null } = {}) {
       if (guest && !guest.npc) credit(state, guest, match.entry, 'refund', { match: match.id });
       if (guest && guest.npc) guest.balance = round(guest.balance + match.entry);
     } else {
-      const payout = round(match.entry * 2 * (1 - FEE));
+      const payout = listingPrize(match.entry);
       match.payout = payout;
       const winner = match.winnerId === host.id ? host : guest;
       if (winner) {
@@ -492,7 +492,7 @@ export function settleAgreed(state, match, winnerId, { forfeitId = null } = {}) 
   match.status = 'done';
   match.payout = 0;
   if (!match.practice && match.entry > 0) {
-    const payout = round(match.entry * 2 * (1 - FEE));
+    const payout = listingPrize(match.entry);
     match.payout = payout;
     const winner = winnerId === host.id ? host : guest;
     credit(state, winner, payout, 'win', { match: match.id });
@@ -847,13 +847,19 @@ export const PACKS = [
 ];
 
 export const PURCHASE_TAX_PENCE = 230;
+export const CRYPTO_FEE_UNITS = 3;
 
 export function chargePence(tokens) {
   return Math.round(tokens * 100) + PURCHASE_TAX_PENCE;
 }
 
+export function cryptoPriceGbp(tokens) {
+  return round(tokens + CRYPTO_FEE_UNITS);
+}
+
 export const CRYPTO_NETWORKS = ['Solana', 'Ethereum', 'Bitcoin'];
 export const MIN_WITHDRAW = 15;
+export const WITHDRAW_FEE = 2.5;
 const WITHDRAW_MS = 24 * 60 * 60 * 1000;
 
 export function tipQuote(user, amount) {
@@ -877,9 +883,14 @@ export function settleWithdrawals(state) {
 }
 
 export function withdrawalDto(row) {
+  const amount = round(row.amount);
+  const fee = row.fee == null ? 0 : round(row.fee);
+  const payout = row.payout == null ? amount : round(row.payout);
   return {
     id: row.id,
-    amount: row.amount,
+    amount,
+    fee,
+    payout,
     method: row.method,
     destination: row.destination,
     notify: !!row.notify,
@@ -911,8 +922,9 @@ export function creditPaidCheckout(state, session) {
   if (!sessionId.startsWith('cs_')) fail(400, 'Missing checkout session');
   const userId = String(session.metadata?.userId || session.client_reference_id || '');
   const tokens = purchaseAmount(session.metadata?.tokens);
-  const expected = chargePence(tokens);
-  if (session.currency !== 'gbp' || Number(session.amount_total) !== expected) {
+  const currency = String(session.currency || '').toLowerCase();
+  const paid = Number(session.amount_total);
+  if (String(session.metadata?.channel || 'card') !== 'card' || currency !== 'gbp' || paid !== chargePence(tokens)) {
     fail(400, 'Paid amount does not match the token pack');
   }
   if (!Array.isArray(state.paidCheckouts)) state.paidCheckouts = [];
@@ -922,10 +934,35 @@ export function creditPaidCheckout(state, session) {
   if (already) return { duplicate: true, credited: 0 };
   const user = state.users.find((item) => item.id === userId && !item.npc);
   if (!user) fail(404, 'That player is no longer on the server');
-  credit(state, user, tokens, 'deposit', { price: tokens, sessionId, provider: 'stripe' });
+  credit(state, user, tokens, 'deposit', { price: tokens, sessionId, provider: 'stripe', channel: 'card' });
   state.paidCheckouts.push(sessionId);
   if (state.paidCheckouts.length > 500) state.paidCheckouts.splice(0, state.paidCheckouts.length - 500);
-  return { credited: tokens, duplicate: false };
+  return { credited: tokens, duplicate: false, username: user.username };
+}
+
+export function creditNowPayment(state, body) {
+  const orderId = String(body?.order_id || '');
+  const paymentId = String(body?.payment_id || '');
+  const invoice = (state.nowInvoices || []).find((row) => row.orderId === orderId);
+  if (!invoice || !paymentId) return { credited: 0, username: invoice?.username || '', price: invoice?.price || 0 };
+  const price = Number(body.price_amount);
+  const currency = String(body.price_currency || '').toLowerCase();
+  if (currency !== 'gbp' || round(price) !== round(invoice.price)) {
+    fail(400, 'Paid amount does not match the token pack');
+  }
+  if (String(body.payment_status || '') !== 'finished') {
+    return { credited: 0, username: invoice.username || '', price: invoice.price, tokens: invoice.tokens };
+  }
+  if (!Array.isArray(state.paidCheckouts)) state.paidCheckouts = [];
+  const key = `np_${paymentId}`;
+  const already = state.paidCheckouts.includes(key) || state.txs.some((tx) => tx.meta && tx.meta.sessionId === key);
+  if (already) return { credited: 0, duplicate: true, username: invoice.username || '', price: invoice.price };
+  const user = state.users.find((item) => item.id === invoice.userId && !item.npc);
+  if (!user) fail(404, 'That player is no longer on the server');
+  credit(state, user, invoice.tokens, 'deposit', { price: invoice.tokens, sessionId: key, provider: 'nowpayments', channel: 'crypto' });
+  state.paidCheckouts.push(key);
+  if (state.paidCheckouts.length > 500) state.paidCheckouts.splice(0, state.paidCheckouts.length - 500);
+  return { credited: invoice.tokens, duplicate: false, username: user.username, price: invoice.price };
 }
 
 function withdrawalDestination(method, body) {
@@ -953,18 +990,23 @@ function withdrawalDestination(method, body) {
 export function requestWithdrawal(state, user, body) {
   const amount = cashAmount(body.amount, 'a withdrawal amount');
   if (amount < MIN_WITHDRAW) fail(400, 'Minimum withdrawal is 15');
+  const fee = WITHDRAW_FEE;
+  const payout = round(amount - fee);
+  if (payout <= 0) fail(400, 'Minimum withdrawal is 15');
   const method = String(body.method || '').trim().toLowerCase();
   if (!['paypal', 'crypto', 'bank'].includes(method)) fail(400, 'Choose PayPal, Crypto, or Bank');
   const destination = withdrawalDestination(method, body || {});
   const notify = !!body.notify;
   if (!Array.isArray(state.withdrawals)) state.withdrawals = [];
   const id = rid('w');
-  debit(state, user, amount, 'withdraw', { withdrawal: id, method, status: 'pending' });
+  debit(state, user, amount, 'withdraw', { withdrawal: id, method, status: 'pending', fee, payout });
   user.withdrawn = round((user.withdrawn || 0) + amount);
   const row = {
     id,
     userId: user.id,
     amount,
+    fee,
+    payout,
     method,
     destination,
     notify,

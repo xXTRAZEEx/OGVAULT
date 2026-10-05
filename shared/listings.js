@@ -4,6 +4,19 @@ export const REGIONS = ['EU', 'NA'];
 export const PLATFORMS = ['PC'];
 export const MIN_ENTRY = 1;
 export const LISTING_MS = 30 * 60 * 1000;
+export const MATCH_FEE = 0.15;
+
+export function listingFee(entry) {
+  const amount = Number(entry);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  return Math.round(amount * 2 * MATCH_FEE * 100) / 100;
+}
+
+export function listingPrize(entry) {
+  const amount = Number(entry);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  return Math.round(amount * 2 * (1 - MATCH_FEE) * 100) / 100;
+}
 
 export function parseEntry(raw) {
   const value = Math.round(Number(raw) * 100) / 100;

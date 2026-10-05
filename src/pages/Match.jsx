@@ -412,7 +412,7 @@ function Done({ match, me, onRematch }) {
   return (
     <div className="report">
       <p>{tie ? 'Split. Entries refunded.' : won ? 'You took the prize.' : winner ? `${winner.username} took the prize.` : 'Lobby closed.'}</p>
-      {!tie && !match.practice && <p className="payout"><Amount value={match.payout} /> paid, after the 5% fee.</p>}
+      {!tie && !match.practice && <p className="payout"><Amount value={match.payout} /> paid, after the 15% fee.</p>}
       <button className="btn" onClick={onRematch}>Run it back</button>
       <Link className="btn ghost" to="/play">Listings</Link>
     </div>
