@@ -834,7 +834,7 @@ export function blocked(user) {
 }
 
 export function referralBonus() {
-  return 0.5;
+  return 0.05;
 }
 
 export const PACKS = [

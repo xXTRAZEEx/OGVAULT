@@ -594,7 +594,7 @@ export function Rewards() {
       <div className="wallet-grid">
         <article className="panel">
           <h2>Daily</h2>
-          <p>0.1 tokens.</p>
+          <p>0.01 tokens.</p>
           <button className="btn" disabled={!me || !!left} onClick={async () => {
             if (!me) { setAuth('in'); return; }
             try {
@@ -609,7 +609,7 @@ export function Rewards() {
           {me ? (
             <>
               <p className="code">{me.referral}</p>
-              <p className="muted">You and a new player each get 0.5 tokens.</p>
+              <p className="muted">You and a new player each get 0.05 tokens.</p>
               <button className="btn ghost" onClick={() => { navigator.clipboard?.writeText(me.referral); toast('Code copied'); }}>Copy</button>
             </>
           ) : <button className="btn" onClick={() => setAuth('up')}>Register to get a code</button>}

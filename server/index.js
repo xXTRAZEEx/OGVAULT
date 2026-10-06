@@ -1965,7 +1965,7 @@ app.post(
       if (user.dailyClaimedAt && Date.now() - user.dailyClaimedAt < wait) {
         fail(400, 'Daily is still cooling down');
       }
-      const amount = 0.1;
+      const amount = 0.01;
       credit(state, user, amount, 'daily', {});
       user.dailyClaimedAt = Date.now();
       return { user: userDto(user, { self: true }), amount };
