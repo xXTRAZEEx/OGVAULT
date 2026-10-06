@@ -40,7 +40,7 @@ import { SHOP, fail, load, rid, round, update } from './store.js';
 import { assertCleanUsername, offensiveName } from './names.js';
 import { checkoutOrigin, createCoinCheckout, handleStripeWebhook } from './checkout.js';
 import { createNowInvoice, handleNowIpn } from './nowpayments.js';
-import { notifyWithdrawal, sendClipReview, setChatClearedHook, setOnlineCount, setReviewSettleHook, startDiscordAdmin } from './discordAdmin.js';
+import { notifyWithdrawal, sendClipReview, setChatClearedHook, setOnlineCount, setReviewSettleHook, startDiscordAdmin, syncGoldVip } from './discordAdmin.js';
 import {
   consumeDiscordState,
   createDiscordState,
@@ -696,6 +696,8 @@ app.get(
       }
       const profile = await fetchDiscordIdentity(code);
       const result = update((draft) => acceptDiscord(draft, profile));
+      const linked = load().users.find((item) => !item.npc && item.discordId === profile.id);
+      if (linked) syncGoldVip(linked).catch(() => {});
       if (result.banned) {
         discordReturn(res, { discord_error: 'This account is banned' });
         return;
@@ -771,6 +773,27 @@ app.get(
   })
 );
 
+function profileRevealed(viewer, user) {
+  return !!(viewer && viewer.id === user.id);
+}
+
+function hiddenProfile(dto) {
+  return {
+    ...dto,
+    stats: {
+      earned: 0,
+      wins: 0,
+      losses: 0,
+      matches: 0,
+      streak: 0,
+      bestStreak: 0,
+      winRate: 0,
+      bestScore: 0,
+    },
+    usernameHistory: [],
+  };
+}
+
 app.get(
   '/api/users/:name',
   route((req, res) => {
@@ -778,14 +801,41 @@ app.get(
     const user = state.users.find((item) => item.username.toLowerCase() === String(req.params.name).toLowerCase());
     if (!user) fail(404, 'No player by that name');
     const viewer = currentUser(req);
-    const recent = state.history
-      .filter((row) => row.players.some((player) => player.id === user.id))
-      .slice(0, 12);
+    const revealed = profileRevealed(viewer, user);
+    const recent = revealed
+      ? state.history.filter((row) => row.players.some((player) => player.id === user.id)).slice(0, 12)
+      : [];
+    const dto = userDto(user, { self: viewer?.id === user.id, online: online.has(user.id) });
     res.json({
-      user: userDto(user, { self: viewer?.id === user.id, online: online.has(user.id) }),
+      user: revealed ? dto : hiddenProfile(dto),
       recent,
-      friend: !!(viewer && viewer.friends.includes(user.id)),
+      revealed,
+      snipes: viewer?.snipes || 0,
     });
+  })
+);
+
+app.post(
+  '/api/users/:name/snipe',
+  route((req, res) => {
+    const me = requireUser(req);
+    const result = update((state) => {
+      const viewer = state.users.find((item) => item.id === me.id);
+      const user = state.users.find((item) => item.username.toLowerCase() === String(req.params.name).toLowerCase());
+      if (!user) fail(404, 'No player by that name');
+      if (viewer.id === user.id) fail(400, 'That is your own profile');
+      if ((viewer.snipes || 0) < 1) fail(400, 'No snipes left. The shop sells a pack of five.');
+      viewer.snipes -= 1;
+      const recent = state.history.filter((row) => row.players.some((player) => player.id === user.id)).slice(0, 12);
+      return {
+        user: userDto(user, { online: online.has(user.id) }),
+        recent,
+        revealed: true,
+        snipes: viewer.snipes,
+        me: userDto(viewer, { self: true }),
+      };
+    });
+    res.json(result);
   })
 );
 
@@ -927,6 +977,10 @@ app.get(
   route((req, res) => {
     const changed = update((state) => {
       const tick = tickEconomy(state);
+      const match = state.matches.find((item) => item.id === req.params.id);
+      if (match && bothClipsIn(match) && !(match.voteUnlockAt > 0 && match.voteUnlockAt <= Date.now())) {
+        match.voteUnlockAt = Date.now();
+      }
       return { finished: tick.finished, notes: tick.notes || [] };
     });
     const state = load();
@@ -950,7 +1004,7 @@ app.post(
     const practice = !!req.body.practice;
     const entry = practice ? 0 : parseEntry(req.body.entry);
     const project = PROJECTS.includes(req.body.project) ? req.body.project : 'Eon';
-    if (!MODES.includes(req.body.mode)) fail(400, 'Mode must be 1v1 Kill Race');
+    if (!MODES.includes(req.body.mode)) fail(400, 'Mode must be Kill Race');
     if (!REGIONS.includes(req.body.region)) fail(400, 'Region must be EU or NA');
     const mode = req.body.mode;
     const region = req.body.region;
@@ -961,7 +1015,7 @@ app.post(
       assertMatchmakingOpen(state);
       const user = state.users.find((item) => item.id === me.id);
       assertAccountOpen(user);
-      if (busy(state, user.id)) fail(400, 'Finish your open 1v1 before joining another');
+      if (busy(state, user.id)) fail(400, 'Finish your open Kill Race before joining another');
       const openCount = state.matches.filter(
         (match) =>
           match.hostId === user.id && ['open', 'staging', 'live', 'playing', 'result'].includes(match.status)
@@ -987,7 +1041,7 @@ app.post(
       assertMatchmakingOpen(state);
       const user = state.users.find((item) => item.id === me.id);
       assertAccountOpen(user);
-      if (busy(state, user.id)) fail(400, 'Finish your open 1v1 before joining another');
+      if (busy(state, user.id)) fail(400, 'Finish your open Kill Race before joining another');
       const table = state.matches.find(
         (match) =>
           match.status === 'open' &&
@@ -1149,7 +1203,7 @@ app.post(
       assertMatchmakingOpen(state);
       const user = state.users.find((item) => item.id === me.id);
       assertAccountOpen(user);
-      if (busy(state, user.id)) fail(400, 'Finish your open 1v1 before joining another');
+      if (busy(state, user.id)) fail(400, 'Finish your open Kill Race before joining another');
       const match = state.matches.find((item) => item.id === req.params.id);
       if (!match) fail(404, 'Match not found');
       return joinMatch(state, match, user);
@@ -1189,7 +1243,7 @@ app.post(
       const user = state.users.find((item) => item.id === me.id);
       const match = state.matches.find((item) => item.id === req.params.id);
       if (!match) fail(404, 'Match not found');
-      if (['live', 'playing', 'result'].includes(match.status)) fail(400, 'The 1v1 is in progress. Report the result or forfeit.');
+      if (['live', 'playing', 'result'].includes(match.status)) fail(400, 'The Kill Race is in progress. Report the result or forfeit.');
       if (match.status === 'done' || match.status === 'cancelled') return { match: matchDto(state, match, user.id) };
       if (match.practice) {
         match.status = 'cancelled';
@@ -1230,7 +1284,7 @@ app.post(
       const user = state.users.find((item) => item.id === me.id);
       const match = state.matches.find((item) => item.id === req.params.id);
       if (!match) fail(404, 'Match not found');
-      if (!['staging', 'live', 'playing', 'result', 'dispute'].includes(match.status)) fail(400, 'This 1v1 is not in progress');
+      if (!['staging', 'live', 'playing', 'result', 'dispute'].includes(match.status)) fail(400, 'This Kill Race is not in progress');
       if (match.hostId !== user.id && match.guestId !== user.id) fail(403, 'You are not in this match');
       if (match.status === 'live') resolveMatch(state, match, { forfeitId: user.id });
       else {
@@ -1372,7 +1426,10 @@ app.post('/api/matches/:id/clip', (req, res) => {
         if (!reportsConflict(match)) fail(400, 'Both players have to disagree on the winner before uploading');
         match.clips = match.clips || {};
         match.clips[user.id] = { name: safeClipName(file.filename), size, at: Date.now() };
-        if (bothClipsIn(match)) match.voteUnlockAt = Date.now();
+        if (bothClipsIn(match)) {
+          match.voteUnlockAt = Date.now();
+          match.revotes = {};
+        }
         return { match: matchDto(state, match, user.id) };
       });
       pingMatch(req.params.id);
@@ -1655,9 +1712,9 @@ app.post(
       const user = state.users.find((item) => item.id === me.id);
       assertAccountOpen(user);
       const prev = state.matches.find((item) => item.id === req.params.id);
-      if (!prev || prev.status !== 'done') fail(400, 'Rematch from a finished 1v1');
+      if (!prev || prev.status !== 'done') fail(400, 'Rematch from a finished Kill Race');
       if (prev.hostId !== user.id && prev.guestId !== user.id) fail(403, 'You were not in that match');
-      if (busy(state, user.id)) fail(400, 'Finish your open 1v1 before joining another');
+      if (busy(state, user.id)) fail(400, 'Finish your open Kill Race before joining another');
       const otherId = prev.hostId === user.id ? prev.guestId : prev.hostId;
       const other = state.users.find((item) => item.id === otherId);
       if (!other) fail(400, 'That player is no longer on the server');
@@ -1675,7 +1732,7 @@ app.post(
       if (ask.fromId !== otherId) fail(400, 'That rematch request is no longer open');
       if (user.balance < prev.entry) fail(400, 'Not enough tokens for the same entry');
       if (other.balance < prev.entry) fail(400, `${other.username} does not have enough tokens`);
-      if (busy(state, user.id) || busy(state, other.id)) fail(400, 'Finish your open 1v1 before joining another');
+      if (busy(state, user.id) || busy(state, other.id)) fail(400, 'Finish your open Kill Race before joining another');
       debit(state, other, prev.entry, 'entry', {});
       const match = freshMatch({
         host: other,
@@ -1863,9 +1920,12 @@ app.post(
     const result = update((state) => {
       const user = state.users.find((item) => item.id === me.id);
       const item = buyItem(state, user, String(req.body.itemId || ''));
-      return { item, user: userDto(user, { self: true }) };
+      return { item, user: userDto(user, { self: true }), discordId: user.discordId, vipUntil: user.vipUntil };
     });
-    res.json(result);
+    if (result.item?.id === 'vip') {
+      syncGoldVip({ discordId: result.discordId, vipUntil: result.vipUntil }).catch(() => {});
+    }
+    res.json({ item: result.item, user: result.user });
   })
 );
 

@@ -51,7 +51,7 @@ export function Play() {
     <div className="stack-lg">
       <PageHead
         kicker="Listings"
-        title="1v1 listings"
+        title="Kill Race listings"
         text="Open a lobby for Eon or Retrac. The other player joins, you ready up, and the private room is yours while you play on that project."
       >
         <button className="btn" onClick={quick}>Quick join</button>
@@ -94,7 +94,7 @@ export function Play() {
           <button className="btn" onClick={create}>Create listing · <Amount value={parseEntry(entry) || 0} /></button>
         </div>
         <ol className="steps">
-          <li><b>Create 1v1.</b> Pick Eon or Retrac, the region, and wager fee. 1 game thats it.</li>
+          <li><b>Create a Kill Race.</b> Pick Eon or Retrac, the region, and wager fee. 1 game thats it.</li>
           <li><b>Drop In.</b> Both players ready up at the same time and play one match.</li>
           <li><b>Win.</b> Whoever gets the most kills in one match wins.</li>
         </ol>

@@ -111,11 +111,11 @@ const rules = [
 
 const howTo = [
   'Create an account at https://ogvault.co.uk and sign in with Discord.',
-  'Open a 1v1, pick Eon or Retrac, EU or NA, and your entry.',
-  'Your opponent joins the lobby. Both players press ready.',
-  'Play the kill race in the project, not in the browser.',
-  'Both players report the winner. If the reports match, the prize is paid.',
-  'If they do not match, upload your clip and send the match for review.',
+  'Make a lobby on the site, or join one.',
+  'Both players ready up on the site.',
+  '**You must screen record the entire screen.**',
+  'After the game, report how many kills you got in the private lobby chat and pick who won.',
+  'If you disagree, both players must upload their footage and vote again. If you still do not agree, press Send for review and a reviewer will decide who won.',
 ].map((line, index) => `**${index + 1}.** ${line}`).join('\n');
 
 async function main() {
@@ -171,7 +171,7 @@ async function main() {
 
   const welcome = await ensureText(channels, start, 'welcome', 'Start here. 18+.', gateView);
   const rulesChannel = await ensureText(channels, start, 'rules', 'Server rules.', gateView);
-  const guide = await ensureText(channels, start, 'how-to-play', 'How an OGVAULT 1v1 works.', gateView);
+  const guide = await ensureText(channels, start, 'how-to-play', 'How an OGVAULT Kill Race works.', gateView);
   const verify = await ensureText(channels, start, 'verify', 'Link the Discord you use on OGVAULT.', gateView);
   const regions = await ensureText(channels, start, 'regions', 'Pick NA or EU.', gateView);
   const general = await ensureText(channels, community, 'general', 'Talk with other players.', memberChat);
@@ -220,7 +220,7 @@ async function main() {
   await upsertMessage(welcome.id, {
     embeds: [{
       title: 'Welcome to OGVAULT',
-      description: 'OG 1v1 kill races for real pots.\n\nRead the rules, link your Discord, then pick NA or EU. Member channels open after your vault account is linked.',
+      description: 'OG Kill Races for real pots.\n\nRead the rules, link your Discord, then pick NA or EU. Member channels open after your vault account is linked.',
       color: 0xf1c40f,
     }],
   });

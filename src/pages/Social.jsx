@@ -94,18 +94,20 @@ export function Profile() {
         </div>
         <div className="page-actions">
           {self && <Link className="btn ghost" to="/shop#inventory">Inventory</Link>}
-          {!self && (
-            <button className="btn ghost" onClick={async () => {
+          {!self && !data.revealed && (
+            <button className="btn" onClick={async () => {
               if (!me) { setAuth('in'); return; }
               try {
-                await api('/api/friends', { method: 'POST', body: { username: user.username } });
-                toast('Added');
+                const next = await api(`/api/users/${user.username}/snipe`, { method: 'POST' });
+                setMe(next.me);
+                setData(next);
+                toast('Record revealed.');
               } catch (err) { toast(err.message, 'bad'); }
-            }}>{data.friend ? 'Friends' : 'Add friend'}</button>
+            }} disabled={!!me && (me.snipes || 0) < 1}>{(me?.snipes || 0) > 0 ? 'Use a snipe' : 'No snipes'}</button>
           )}
         </div>
       </section>
-      <div className="stat-grid">
+      <div className={`stat-grid ${data.revealed ? '' : 'locked'}`}>
         {stats.map(([label, value]) => (
           <article key={label} className="panel stat-card">
             <span>{label}</span>
@@ -113,7 +115,7 @@ export function Profile() {
           </article>
         ))}
       </div>
-      <section className="panel">
+      <section className={`panel ${data.revealed ? '' : 'locked'}`}>
         <h2>Recent matches</h2>
         {data.recent.map((row) => {
           const mine = row.players.find((player) => player.id === user.id);
@@ -121,7 +123,7 @@ export function Profile() {
           const result = !row.winnerId ? 'Tie' : row.winnerId === user.id ? 'Win' : 'Loss';
           return (
             <div className="tr match-line" key={row.id}>
-              <span>{row.mode || '1v1'}</span>
+              <span>{row.mode === '1v1 Kill Race' || !row.mode ? 'Kill Race' : row.mode}</span>
               <span>{row.practice ? 'Practice' : 'Duel'}</span>
               <span><Amount value={row.entry} /></span>
               <span className={result === 'Win' ? 'up' : result === 'Loss' ? 'down' : ''}>{result} {mine ? Number(mine.score).toLocaleString() : ''}{other ? ` vs ${other.username}` : ''}</span>
@@ -131,7 +133,7 @@ export function Profile() {
         })}
         {!data.recent.length && <p className="muted">No finished duels yet.</p>}
       </section>
-      <section className="panel">
+      <section className={`panel ${data.revealed ? '' : 'locked'}`}>
         <h2>Username history</h2>
         {user.usernameHistory?.length ? user.usernameHistory.map((row) => (
           <p key={row.at}>{row.name} · {ago(row.at)}</p>
@@ -173,14 +175,16 @@ export function Profile() {
 export function HowTo() {
   return (
     <div className="stack-lg prose">
-      <PageHead kicker="Rules" title="How a lobby works" text="1v1 listings are for OG projects such as Eon and Retrac. You ready up here. You play there." />
+      <PageHead kicker="Rules" title="How a lobby works" text="Kill Race listings are for OG projects such as Eon and Retrac. You ready up here. You play there." />
       <section className="panel">
         <h2>The listing</h2>
         <ol className="steps">
-          <li>Create a lobby and pick the project, mode, region, platform, and first to. Your entry locks.</li>
-          <li>The other player joins the guest seat. The private room is only for the two of you.</li>
-          <li>Both press ready. Load into Eon or Retrac and play the 1v1.</li>
-          <li>Both report the same winner. That pays the pot minus 20%. Disagreeing reports stay open until you agree. An open lobby expires in 30 minutes and refunds the entry.</li>
+          <li>Create an account and sign in with Discord.</li>
+          <li>Make a lobby on the site, or join one.</li>
+          <li>Both players ready up on the site.</li>
+          <li><strong>You must screen record the entire screen.</strong></li>
+          <li>After the game, report how many kills you got in the private lobby chat and pick who won.</li>
+          <li>If you disagree, both players must upload their footage and vote again. If you still do not agree, press Send for review and a reviewer will decide who won.</li>
         </ol>
       </section>
       <section className="panel">
@@ -189,7 +193,7 @@ export function HowTo() {
       </section>
       <section className="panel">
         <h2>Around the lobby</h2>
-        <p>Cups turn finished 1v1s into points. The shop sells VIP, snipes, and streak shields. A snipe shows a record before you ready up. A shield keeps your streak after one loss. Player of the week pays 15, 10, and 5 tokens to the players who won the most from finished 1v1s.</p>
+        <p>Cups turn finished Kill Races into points. The shop sells VIP, snipes, and streak shields. A snipe shows another player's record, on their profile or before you ready up. A shield keeps your streak after one loss. Player of the week pays 15, 10, and 5 tokens to the players who won the most from finished Kill Races.</p>
         <p><Link to="/play">Open a listing</Link></p>
       </section>
     </div>
@@ -200,7 +204,7 @@ const LEGAL = {
   terms: {
     title: 'Terms',
     body: [
-      'OGVAULT on this server is a skill lobby for OG project 1v1s. You must be 18 or older and you may hold one account.',
+      'OGVAULT on this server is a skill lobby for OG project Kill Races. You must be 18 or older and you may hold one account.',
       'Vault Tokens are the ledger used for entries, shop items, and rewards. A match pays when both players report the same winner.',
       'Collusion, multi-accounting, and selling accounts are grounds for a lock. The operator of a deployed OGVAULT server is responsible for any real-money rules that apply where they operate.',
     ],
@@ -216,7 +220,7 @@ const LEGAL = {
   responsible: {
     title: 'Responsible play',
     body: [
-      '1v1 listings are skill contests with an entry. Only play with tokens you are willing to lose on this server.',
+      'Kill Race listings are skill contests with an entry. Only play with tokens you are willing to lose on this server.',
       'If competing for tokens is getting away from you, stop and talk to someone you trust.',
     ],
   },

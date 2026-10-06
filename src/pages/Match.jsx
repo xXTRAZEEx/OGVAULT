@@ -118,7 +118,7 @@ function Listing({ match, me, act, id, toast, setAuth }) {
         <div className="pills">
           <span>{match.platform === 'All' ? 'All platform' : match.platform}</span>
           <span>{match.region} region</span>
-          <span>1v1 team size</span>
+          <span>Kill Race team size</span>
           <span>{match.firstTo} first to</span>
         </div>
         <ol className="stepper">
@@ -132,7 +132,7 @@ function Listing({ match, me, act, id, toast, setAuth }) {
       </div>
 
       <div className="lobby-grid">
-        <Seat side="host" user={match.host} ready={match.hostReady} you={youHost} label="Host" />
+        <Seat side="host" user={match.host} ready={match.hostReady} you={youHost} label="Host" winnerId={match.winnerId} settled={phase === 'completed' || match.status === 'done'} />
         <section className="lobby-center">
           <div className="vs-badge">VS</div>
           {phase === 'waiting' || phase === 'readyup' ? (
@@ -198,6 +198,8 @@ function Listing({ match, me, act, id, toast, setAuth }) {
           ready={match.guestReady}
           you={youGuest}
           label="Guest"
+          winnerId={match.winnerId}
+          settled={phase === 'completed' || match.status === 'done'}
           empty={!match.guest}
           onJoin={!youIn && match.status === 'open' ? () => act(`/api/matches/${id}/join`, {}, 'You are in the lobby.') : null}
         />
@@ -226,7 +228,11 @@ function Snipe({ match, me, onSnipe }) {
   return <button className="btn" type="button" onClick={onSnipe}>Snipe</button>;
 }
 
-function Seat({ side, user, ready, you, label, empty, onJoin }) {
+function Seat({ side, user, ready, you, label, empty, onJoin, winnerId, settled }) {
+  const won = settled && user && winnerId === user.id;
+  const lost = settled && user && winnerId && winnerId !== user.id;
+  const tag = won ? 'Winner' : lost ? 'Loser' : ready ? 'Ready' : 'Not ready';
+  const tagClass = won ? 'tag good' : lost ? 'tag bad' : ready ? 'tag good' : 'tag';
   return (
     <article className={`seat ${side} ${you ? 'you' : ''} ${empty ? 'empty' : ''}`}>
       <header>
@@ -243,7 +249,7 @@ function Seat({ side, user, ready, you, label, empty, onJoin }) {
           <Avatar user={user} size={64} />
           <div>
             <Name user={user} />
-            <p className={ready ? 'tag good' : 'tag'}>{ready ? 'Ready' : 'Not ready'}</p>
+            <p className={tagClass}>{tag}</p>
           </div>
         </div>
       )}
@@ -292,7 +298,7 @@ function Report({ match, me, toast, onPick, onReview }) {
   const s = Math.floor((left % 60000) / 1000);
   return (
     <div className="report">
-      {match.report?.conflict && !votesOpen && <p className="error">Those reports do not match. Upload gameplay below. Your pick stays locked.</p>}
+      {match.report?.conflict && !votesOpen && <p className="error">Those reports do not match. Upload both clips and the vote reopens.</p>}
       {match.report?.conflict && bothClips && !votesOpen && unlockAt > 0 && (
         <p className="muted">Votes unlock in {m}:{String(s).padStart(2, '0')}.</p>
       )}

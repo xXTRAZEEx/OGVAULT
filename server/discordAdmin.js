@@ -9,6 +9,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
   GatewayIntentBits,
+  ActivityType,
   PermissionFlagsBits,
   REST,
   Routes,
@@ -28,8 +29,10 @@ import {
   settleAgreed,
 } from './logic.js';
 import { blackjackBiasPercent, setBlackjackBias } from './blackjack.js';
-import { fail, load, rid, round, update } from './store.js';
+import { fail, isVip, load, rid, round, update } from './store.js';
 
+const GOLD_VIP_ROLE_NAME = 'GOLD VIP';
+const GOLD_VIP_COLOR = 0xf5c451;
 const REVIEWER_CHANNEL_ID = '1556086496207962122';
 const REVIEWER_ROLE_NAME = 'Reviewer';
 const REVIEWER_COLOR = 0x57f287;
@@ -102,8 +105,8 @@ const commands = [
     )),
   adminOnly(new SlashCommandBuilder()
     .setName('matchmaking')
-    .setDescription('Turn 1v1 matchmaking on or off')
-    .addBooleanOption((option) => option.setName('enabled').setDescription('On allows new 1v1 listings').setRequired(true))
+    .setDescription('Turn Kill Race matchmaking on or off')
+    .addBooleanOption((option) => option.setName('enabled').setDescription('On allows new Kill Race listings').setRequired(true))
     .addNumberOption((option) =>
       option.setName('hours').setDescription('How long to keep matchmaking off').setRequired(false).setMinValue(0.01)
     )),
@@ -322,6 +325,52 @@ async function purgeChannel(channel) {
   return removed;
 }
 
+async function ensureGoldVipRole(guild) {
+  await guild.roles.fetch();
+  let role = guild.roles.cache.find((item) => item.name === GOLD_VIP_ROLE_NAME)
+    || guild.roles.cache.find((item) => item.name === 'goldVip');
+  if (!role) {
+    role = await guild.roles.create({
+      name: GOLD_VIP_ROLE_NAME,
+      color: GOLD_VIP_COLOR,
+      hoist: true,
+      reason: 'OG VIP buyers',
+    });
+  } else if (role.name !== GOLD_VIP_ROLE_NAME || role.color !== GOLD_VIP_COLOR || !role.hoist) {
+    await role.edit({ name: GOLD_VIP_ROLE_NAME, color: GOLD_VIP_COLOR, hoist: true });
+  }
+  const member = guild.roles.cache.find((item) => item.name === 'Member');
+  if (member && role.position <= member.position) {
+    await role.setPosition(member.position + 1, { reason: 'GOLD VIP sits above Member' });
+  }
+  return role;
+}
+
+export async function syncGoldVip(user) {
+  if (!bot?.isReady?.() || !user?.discordId) return;
+  const guildId = String(process.env.DISCORD_GUILD_ID || '').trim();
+  if (!/^\d{5,32}$/.test(guildId)) return;
+  try {
+    const guild = await bot.guilds.fetch(guildId);
+    const role = await ensureGoldVipRole(guild);
+    if (isVip(user)) {
+      await guild.members.addRole({ user: String(user.discordId), role, reason: 'OG VIP is active' });
+    } else {
+      await guild.members.removeRole({ user: String(user.discordId), role, reason: 'OG VIP ended' });
+    }
+  } catch (error) {
+    console.error('goldVip role sync failed', error.status || error.code || '');
+  }
+}
+
+async function sweepGoldVip() {
+  const users = load().users || [];
+  for (const user of users) {
+    if (!user?.discordId || user.npc || !user.vipUntil) continue;
+    await syncGoldVip(user);
+  }
+}
+
 async function ensureReviewerRole(guild) {
   await guild.roles.fetch();
   let role = guild.roles.cache.find((item) => item.name === REVIEWER_ROLE_NAME);
@@ -330,16 +379,19 @@ async function ensureReviewerRole(guild) {
       name: REVIEWER_ROLE_NAME,
       color: REVIEWER_COLOR,
       permissions: REVIEWER_PERMISSIONS,
+      mentionable: true,
       reason: 'OGVAULT match reviewers',
     });
   } else if (
     role.color !== REVIEWER_COLOR ||
+    !role.mentionable ||
     role.permissions.has(PermissionFlagsBits.ManageEvents) ||
     !role.permissions.has(PermissionFlagsBits.ReadMessageHistory)
   ) {
     await role.edit({
       color: REVIEWER_COLOR,
       permissions: REVIEWER_PERMISSIONS,
+      mentionable: true,
     });
   }
   reviewerRoleId = role.id;
@@ -524,6 +576,18 @@ function setWebsite(status, reason, length, unit) {
 
 let bot = null;
 let botFailed = false;
+
+function applyBotStatus() {
+  if (!bot?.user) return;
+  const state = load();
+  const backAt = Number(state.websiteBackAt) || 0;
+  const offline = !!state.websiteOffline && (!backAt || backAt > Date.now());
+  const text = offline ? 'Offline · ogvault.co.uk' : 'ogvault.co.uk';
+  bot.user.setPresence({
+    status: offline ? 'dnd' : 'online',
+    activities: [{ type: ActivityType.Custom, name: 'status', state: text }],
+  });
+}
 let afterReviewSettled = () => {};
 let afterChatCleared = () => {};
 
@@ -633,7 +697,13 @@ export async function sendClipReview(payload) {
   }
   if (!channel || typeof channel.send !== 'function') reviewUnreachable();
   try {
+    const role = reviewerRoleId
+      ? { id: reviewerRoleId }
+      : channel.guild?.roles?.cache?.find((item) => item.name === REVIEWER_ROLE_NAME);
+    const content = role ? `<@&${role.id}>` : '';
     await channel.send({
+      content,
+      allowedMentions: role ? { roles: [role.id] } : undefined,
       embeds: Array.isArray(payload?.embeds) ? payload.embeds : [],
       components: Array.isArray(payload?.components) ? payload.components : [],
     });
@@ -709,6 +779,10 @@ async function handleInventoryButton(interaction) {
     await interaction.reply({ content: error.status ? error.message : 'That removal failed', ephemeral: true });
     return;
   }
+  if (key === 'vip') {
+    const user = load().users.find((entry) => entry.id === userId);
+    syncGoldVip(user).catch(() => {});
+  }
   await interaction.update(payload);
 }
 
@@ -731,14 +805,18 @@ async function handleInventoryAdd(interaction) {
     await interaction.reply({ content: error.status ? error.message : 'That add failed', ephemeral: true });
     return;
   }
+  if (key === 'vip') {
+    const user = load().users.find((entry) => entry.id === userId);
+    syncGoldVip(user).catch(() => {});
+  }
   await interaction.update(payload);
 }
 
 const TICKET_KINDS = {
-  bug: { label: 'Report a bug', description: 'Something on the site is broken', emoji: '🐞', color: 0xed4245 },
-  withdraw: { label: 'Withdrawal', description: 'A payout has not arrived', emoji: '💳', color: 0xf1c40f },
-  account: { label: 'Account issue', description: 'Login, ban, or account help', emoji: '👤', color: 0x5865f2 },
-  content: { label: 'Content creation', description: 'Apply to make content for OGVAULT', emoji: '🎬', color: 0xe84393 },
+  bug: { label: 'Report a bug', description: 'Something on the site is broken', emoji: '🐞', color: 0xed4245, category: 'Bugs' },
+  withdraw: { label: 'Withdrawal', description: 'A payout has not arrived', emoji: '💳', color: 0xf1c40f, category: 'Withdrawals' },
+  account: { label: 'Account issue', description: 'Login, ban, or account help', emoji: '👤', color: 0x5865f2, category: 'Account issues' },
+  content: { label: 'Content creation', description: 'Apply to make content for OGVAULT', emoji: '🎬', color: 0xe84393, category: 'Content creation' },
 };
 
 const TICKET_ACCESS = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles];
@@ -773,19 +851,21 @@ async function syncTicketAccess(guild) {
   const channels = await guild.channels.fetch();
   const staff = [helper, owner].filter(Boolean);
   for (const channel of channels.values()) {
-    const isTicket = channel.name === 'Tickets' || String(channel.topic || '').startsWith('ticket:');
+    const ticketCategories = new Set(Object.values(TICKET_KINDS).map((choice) => choice.category));
+    const isTicket = ticketCategories.has(channel.name) || String(channel.topic || '').startsWith('ticket:');
     if (!isTicket) continue;
     await allowTicketStaff(channel, staff);
   }
 }
 
-async function ticketCategory(guild) {
+async function ticketCategory(guild, kind) {
+  const choice = TICKET_KINDS[kind];
   const channels = await guild.channels.fetch();
-  const existing = channels.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === 'Tickets');
+  const existing = channels.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === choice.category);
   if (existing) return existing;
   const { helper, owner } = await ticketAccessRoles(guild);
   return guild.channels.create({
-    name: 'Tickets',
+    name: choice.category,
     type: ChannelType.GuildCategory,
     permissionOverwrites: [
       { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
@@ -796,28 +876,57 @@ async function ticketCategory(guild) {
 
 function ticketModal(kind) {
   const choice = TICKET_KINDS[kind];
-  return new ModalBuilder()
-    .setCustomId(`ogvault:ticket:form:${kind}`)
-    .setTitle(choice.label.slice(0, 45))
-    .addComponents(
+  const modal = new ModalBuilder().setCustomId(`ogvault:ticket:form:${kind}`).setTitle(choice.label.slice(0, 45));
+  if (kind === 'content') {
+    return modal.addComponents(
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
-          .setCustomId('detail')
-          .setLabel('Describe your issue')
-          .setStyle(TextInputStyle.Paragraph)
+          .setCustomId('platform')
+          .setLabel('What platform do you use?')
+          .setPlaceholder('TikTok, YouTube, or both')
+          .setStyle(TextInputStyle.Short)
           .setRequired(true)
-          .setMaxLength(1000),
+          .setMaxLength(100),
       ),
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
-          .setCustomId('proof')
-          .setLabel('Proof')
-          .setPlaceholder('Clip link, screenshot link, or what you can show')
-          .setStyle(TextInputStyle.Paragraph)
+          .setCustomId('followers')
+          .setLabel('How many followers?')
+          .setPlaceholder('Example: 12,000')
+          .setStyle(TextInputStyle.Short)
           .setRequired(true)
-          .setMaxLength(1000),
+          .setMaxLength(100),
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('profile')
+          .setLabel('Link to your profile page')
+          .setPlaceholder('https://')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(300),
       ),
     );
+  }
+  return modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId('detail')
+        .setLabel('Describe your issue')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+        .setMaxLength(1000),
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId('proof')
+        .setLabel('Proof')
+        .setPlaceholder('Clip link, screenshot link, or what you can show')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+        .setMaxLength(1000),
+    ),
+  );
 }
 
 async function canCloseTicket(interaction, opener) {
@@ -828,19 +937,26 @@ async function canCloseTicket(interaction, opener) {
   return !!roles && ((owner && roles.has(owner.id)) || (helper && roles.has(helper.id)));
 }
 
-function ticketCard({ choice, detail, proof, account, username }) {
-  return new EmbedBuilder()
+function ticketCard({ choice, detail, proof, platform, followers, profile, account, username }) {
+  const embed = new EmbedBuilder()
     .setAuthor({ name: 'OGVAULT Support' })
     .setTitle(`${choice.emoji}  ${choice.label}`)
     .setColor(choice.color)
-    .setDescription(detail)
     .addFields(
       { name: 'Vault account', value: account, inline: true },
       { name: 'Opened by', value: username, inline: true },
-      { name: 'Proof', value: proof },
     )
     .setFooter({ text: 'Reply in this channel. Close the ticket when it is finished.' })
     .setTimestamp(new Date());
+  if (platform) {
+    return embed
+      .setDescription(profile || 'No profile link')
+      .addFields(
+        { name: 'Platform', value: platform, inline: true },
+        { name: 'Followers', value: followers || '—', inline: true },
+      );
+  }
+  return embed.setDescription(detail).addFields({ name: 'Proof', value: proof });
 }
 
 async function handleTicket(interaction, id) {
@@ -866,14 +982,19 @@ async function handleTicket(interaction, id) {
   const topic = `ticket:${interaction.user.id}`;
   const existing = channels.find((channel) => channel.topic === topic);
   if (existing) {
+    const category = await ticketCategory(guild, kind);
+    if (existing.parentId !== category.id) await existing.setParent(category.id, { lockPermissions: false });
     await interaction.editReply({ content: `You already have a ticket: ${existing}` });
     return;
   }
   const { helper, owner } = await ticketAccessRoles(guild);
-  const category = await ticketCategory(guild);
+  const category = await ticketCategory(guild, kind);
   const slug = String(interaction.user.username || 'user').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 16) || 'user';
-  const detail = interaction.fields.getTextInputValue('detail').slice(0, 1000);
-  const proof = interaction.fields.getTextInputValue('proof').slice(0, 1000);
+  const detail = kind === 'content' ? '' : interaction.fields.getTextInputValue('detail').slice(0, 1000);
+  const proof = kind === 'content' ? '' : interaction.fields.getTextInputValue('proof').slice(0, 1000);
+  const platform = kind === 'content' ? interaction.fields.getTextInputValue('platform').slice(0, 100) : '';
+  const followers = kind === 'content' ? interaction.fields.getTextInputValue('followers').slice(0, 100) : '';
+  const profile = kind === 'content' ? interaction.fields.getTextInputValue('profile').slice(0, 300) : '';
   const linked = load().users?.find((user) => !user.npc && String(user.discordId || '') === interaction.user.id);
   const channel = await guild.channels.create({
     name: `ticket-${slug}`,
@@ -886,6 +1007,7 @@ async function handleTicket(interaction, id) {
       ...[owner, helper].filter(Boolean).map((role) => ({ id: role.id, allow: TICKET_ACCESS })),
     ],
   });
+  if (channel.parentId !== category.id) await channel.setParent(category.id, { lockPermissions: false });
   await channel.send({
     content: `${interaction.user}`,
     embeds: [
@@ -893,6 +1015,9 @@ async function handleTicket(interaction, id) {
         choice,
         detail,
         proof,
+        platform,
+        followers,
+        profile,
         account: linked?.username || 'Not linked',
         username: interaction.user.username,
       }),
@@ -943,6 +1068,7 @@ async function handleCommunityButton(interaction) {
       return;
     }
     await interaction.member.roles.add(memberRole);
+    syncGoldVip(linked).catch(() => {});
     await interaction.reply({
       content: `Linked as ${linked.username}. You can talk in the member channels now.`,
       ephemeral: true,
@@ -1055,6 +1181,7 @@ async function handleCommand(interaction) {
         interaction.options.getInteger('length'),
         interaction.options.getString('unit'),
       );
+      applyBotStatus();
       const label = result.reason === 'repair' ? 'repair' : 'maintenance';
       await interaction.reply({
         content: result.online
@@ -1081,7 +1208,9 @@ async function handleCommand(interaction) {
     }
     if (interaction.commandName === 'giveall') {
       const sub = interaction.options.getSubcommand();
-      const result = sub === 'tokens' ? giveAllTokens(interaction.options.getNumber('amount')) : giveAllItem(interaction.options.getString('item'));
+      const itemKey = sub === 'tokens' ? '' : interaction.options.getString('item');
+      const result = sub === 'tokens' ? giveAllTokens(interaction.options.getNumber('amount')) : giveAllItem(itemKey);
+      if (itemKey === 'vip') sweepGoldVip().catch(() => {});
       await interaction.reply({
         content: `Updated ${result.updated} user${result.updated === 1 ? '' : 's'}.`,
         ephemeral: true,
@@ -1190,6 +1319,83 @@ export async function notifyPayment({ method, username, tokens, amount, status, 
   }
 }
 
+const COMMAND_GUIDE = [
+  ['/balance', 'Show a site user token balance.'],
+  ['/ban', 'Ban a site account from login and matchmaking for a number of hours.'],
+  ['/unban', 'Clear a site ban so the player can sign in again.'],
+  ['/blackjack bias', 'Show or set how often a player win is settled for the dealer. 0 is fair, 100 is the maximum edge.'],
+  ['/clearchat', 'Clear the site public Live Chat. This does not clear Discord or match chat.'],
+  ['/give', 'Give any Discord role to a member, including Helper, Reviewer, and Content Creator.'],
+  ['/giveall tokens', 'Credit tokens to every registered user.'],
+  ['/giveall item', 'Grant an inventory item to every registered user.'],
+  ['/inventory', 'Show a site user inventory and add or remove items.'],
+  ['/matchmaking', 'Turn new Kill Race listings on or off, with an optional number of hours.'],
+  ['/purge', 'Delete every message in the Discord channel where you run it.'],
+  ['/stats', 'Show live players, registered users, open lobbies, games, tokens, and withdrawals.'],
+  ['/tokens add', 'Add tokens to one site account.'],
+  ['/tokens remove', 'Remove tokens from one site account.'],
+  ['/tournament create', 'Open a cup on the site with a name, player cap, entry, hours, and prizes.'],
+  ['/website', 'Take the whole site offline for repair or maintenance, with an optional countdown, or bring it back online.'],
+  ['/withdrawals list', 'List pending token withdrawal requests.'],
+];
+
+function commandGuideEmbeds() {
+  const lines = COMMAND_GUIDE.map(([name, text]) => `**${name}**\n${text}`);
+  const groups = [];
+  let current = [];
+  let size = 0;
+  for (const line of lines) {
+    if (size + line.length + 2 > 1000 && current.length) {
+      groups.push(current.join('\n\n'));
+      current = [];
+      size = 0;
+    }
+    current.push(line);
+    size += line.length + 2;
+  }
+  if (current.length) groups.push(current.join('\n\n'));
+  const [first, ...rest] = groups;
+  return [
+    new EmbedBuilder()
+      .setTitle('Command list')
+      .setColor(0xf1c40f)
+      .setDescription('Slash commands are limited to **Owner**.')
+      .addFields({ name: 'Owner', value: first }),
+    new EmbedBuilder()
+      .setColor(0xf1c40f)
+      .setDescription(rest.join('\n\n') || '—')
+      .addFields(
+        { name: 'Reviewer', value: 'Can press the award buttons on a clip-review message. No slash commands.' },
+        { name: 'Helper', value: 'Can see support tickets, reply in them, and close them. No slash commands.' },
+        { name: 'Content Creator', value: 'Display role only. No commands.' },
+        { name: 'Member', value: 'Can talk in general, clips, and the community channels after linking a vault account. No slash commands.' },
+        { name: 'Everyone', value: 'Can read the start-here channels, link a vault account, pick NA or EU, and open a support ticket.' },
+      ),
+  ];
+}
+
+async function publishCommandGuide(guild) {
+  const channels = await guild.channels.fetch();
+  const staff = channels.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === 'Staff');
+  let channel = channels.find((item) => item.type === ChannelType.GuildText && item.name === 'command-list');
+  if (!channel) {
+    channel = await guild.channels.create({
+      name: 'command-list',
+      type: ChannelType.GuildText,
+      parent: staff?.id,
+      topic: 'What each bot command does, and who can use it.',
+      permissionOverwrites: [
+        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+      ],
+    });
+  }
+  const embeds = commandGuideEmbeds();
+  const recent = await channel.messages.fetch({ limit: 10 });
+  const existing = recent.find((message) => message.author.id === guild.client.user.id && message.embeds[0]?.title === 'Command list');
+  if (existing) await existing.edit({ embeds });
+  else await channel.send({ embeds });
+}
+
 export function startDiscordAdmin() {
   const token = String(process.env.DISCORD_BOT_TOKEN || '').trim();
   if (!token) {
@@ -1210,7 +1416,15 @@ export function startDiscordAdmin() {
       await rest.put(Routes.applicationGuildCommands(client.user.id, guildId), { body: commands });
       console.log('Discord admin slash commands registered');
       await ensureReviewerRole(await client.guilds.fetch(guildId));
+      await ensureGoldVipRole(await client.guilds.fetch(guildId));
+      await sweepGoldVip();
+      setInterval(() => { sweepGoldVip().catch(() => {}); }, 15 * 60 * 1000);
       await syncTicketAccess(await client.guilds.fetch(guildId));
+      for (const kind of Object.keys(TICKET_KINDS)) {
+        await ticketCategory(await client.guilds.fetch(guildId), kind);
+      }
+      await publishCommandGuide(await client.guilds.fetch(guildId));
+      applyBotStatus();
       console.log('Reviewer role can read message history');
     } catch (error) {
       console.error('Discord slash command registration failed', error.status || '');

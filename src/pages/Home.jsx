@@ -28,10 +28,10 @@ export function Home({ missing = false }) {
       <section className="hero">
         <div className="hero-copy">
           <img className="hero-logo" src="/logo.png" alt="OGVAULT" />
-          <h1>OG 1v1s. Real pots.</h1>
-          <p>Go back in time to the days of OG 1v1 kill race like nothing done before. Play for real money and see who really has the skill.</p>
+          <h1>OG Kill Race. Real pots.</h1>
+          <p>Go back in time to the days of OG Kill Race like nothing done before. Play for real money and see who really has the skill.</p>
           <div className="hero-cta">
-            <Link className="btn" to="/play">Create a 1v1</Link>
+            <Link className="btn" to="/play">Create a Kill Race</Link>
             <Link className="btn ghost" to="/how-to-play">How a lobby works</Link>
           </div>
           <div className="stats">
@@ -67,7 +67,7 @@ export function MatchTable({ matches, setAuth }) {
   const { me, toast, setMe } = useApp();
   const navigate = useNavigate();
   if (!matches?.length) {
-    return <p className="muted">No open listings. Create a 1v1 and wait for a player.</p>;
+    return <p className="muted">No open listings. Create a Kill Race and wait for a player.</p>;
   }
   return (
     <div className="listing-stack">
@@ -75,7 +75,7 @@ export function MatchTable({ matches, setAuth }) {
         <article className="listing-card" key={match.id}>
           <header className="listing-head">
             <span className="who"><Avatar user={match.host} size={32} /><Name user={match.host} link /></span>
-            <h3>{match.mode || '1v1 Kill Race'}</h3>
+            <h3>{match.mode === '1v1 Kill Race' || !match.mode ? 'Kill Race' : match.mode}</h3>
           </header>
           <div className="pills listing-pills">
             <span>Platform {match.platform || 'PC'}</span>

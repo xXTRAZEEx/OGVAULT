@@ -13,7 +13,7 @@ export function Leaderboard() {
   }, [period]);
   return (
     <div>
-      <PageHead kicker="Ranks" title="Leaderboard" text="All-time is tokens won. The clocks count profit from finished 1v1s.">
+      <PageHead kicker="Ranks" title="Leaderboard" text="All-time is tokens won. The clocks count profit from finished Kill Races.">
         <div className="seg">
           {[['all', 'All time'], ['daily', 'Today'], ['weekly', 'Week'], ['monthly', 'Month']].map(([id, label]) => (
             <button key={id} className={period === id ? 'on' : ''} onClick={() => setPeriod(id)}>{label}</button>
@@ -52,7 +52,7 @@ export function Potw() {
   const leaders = data.potw.leaders || [];
   return (
     <div className="stack-lg">
-      <PageHead kicker="Community" title="Player of the week" text="Ranked by the winner payout credited on finished 1v1s this week. The top three take 15, 10, and 5 when the week closes.">
+      <PageHead kicker="Community" title="Player of the week" text="Ranked by the winner payout credited on finished Kill Races this week. The top three take 15, 10, and 5 when the week closes.">
         <div className="cd">
           <b>{pad(time.d)}<small>d</small></b>
           <b>{pad(time.h)}<small>h</small></b>
@@ -70,7 +70,7 @@ export function Potw() {
             <span><Amount value={user.won} /></span>
           </div>
         ))}
-        {!leaders.length && <p className="muted">No finished 1v1 payouts this week yet.</p>}
+        {!leaders.length && <p className="muted">No finished Kill Race payouts this week yet.</p>}
       </div>
     </div>
   );
@@ -81,7 +81,7 @@ export function Tournaments() {
   useEffect(() => { api('/api/tournaments').then((data) => setCups(data.tournaments)); }, []);
   return (
     <div className="stack-lg">
-      <PageHead kicker="Cups" title="Tournaments" text="Cups score finished 1v1 listings. Join, play, and the wins turn into points." />
+      <PageHead kicker="Cups" title="Tournaments" text="Cups score finished Kill Race listings. Join, play, and the wins turn into points." />
       <div className="cup-grid">
         {cups.map((cup) => (
           <Link key={cup.id} to={`/tournaments/${cup.id}`} className="panel cup">

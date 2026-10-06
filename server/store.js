@@ -12,7 +12,7 @@ export const SHOP = [
   {
     id: 'vip',
     name: 'OG VIP',
-    price: 30,
+    price: 14,
     tag: 'Membership',
     blurb: '30 days. Gold frame, crown, and 10 snipes.',
   },
@@ -33,49 +33,49 @@ export const SHOP = [
   {
     id: 'avatar-heat',
     name: 'Heat portrait',
-    price: 6,
+    price: 3,
     tag: 'Style',
     blurb: 'An ember ring for your profile and chat.',
   },
   {
     id: 'avatar-frost',
     name: 'Frost portrait',
-    price: 6,
+    price: 3,
     tag: 'Style',
     blurb: 'A cold ring for your profile and chat.',
   },
   {
     id: 'avatar-gold',
     name: 'Gold portrait',
-    price: 8,
+    price: 5,
     tag: 'Style',
     blurb: 'A trophy ring for your profile and chat.',
   },
   {
     id: 'avatar-retrac',
     name: 'Retrac',
-    price: 8,
+    price: 2,
     tag: 'Style',
     blurb: 'A small green Retrac mark beside your name.',
   },
   {
     id: 'avatar-eon',
     name: 'Eon',
-    price: 8,
+    price: 2,
     tag: 'Style',
     blurb: 'A small Eon mark beside your name.',
   },
   {
     id: 'color-blue',
     name: 'Blue name',
-    price: 6,
+    price: 2.5,
     tag: 'Style',
     blurb: 'Your name renders in vault blue.',
   },
   {
     id: 'color-gold',
     name: 'Gold name',
-    price: 8,
+    price: 5,
     tag: 'Style',
     blurb: 'Your name renders in gold.',
   },
@@ -183,7 +183,7 @@ export function load() {
       if (match.project) return;
       migrated = true;
       match.project = index % 2 ? 'Retrac' : 'Eon';
-      match.mode = '1v1 Box Fight';
+      match.mode = 'Kill Race';
       match.region = index % 2 ? 'NAE' : 'EU';
       match.platform = 'All';
       match.firstTo = 1;

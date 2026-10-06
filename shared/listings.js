@@ -1,5 +1,5 @@
 export const PROJECTS = ['Eon', 'Retrac'];
-export const MODES = ['1v1 Kill Race'];
+export const MODES = ['Kill Race'];
 export const REGIONS = ['EU', 'NA'];
 export const PLATFORMS = ['PC'];
 export const MIN_ENTRY = 1;

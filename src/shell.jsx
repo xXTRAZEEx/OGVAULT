@@ -7,7 +7,7 @@ import { Amount, Avatar, Modal, Name, Token } from './ui';
 
 const NAV = [
   ['Home', '/', HomeIcon],
-  ['1v1s', '/play', PlayIcon],
+  ['Kill Race', '/play', PlayIcon],
   ['Leaderboard', '/leaderboard', BoardIcon],
   ['Player of the Week', '/potw', StarIcon],
   ['Shop', '/shop', ShopIcon],
@@ -23,6 +23,25 @@ export function Shell({ children }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const showLobbyBar = me && activeMatchId && pathname !== `/match/${activeMatchId}`;
+  const [withSomeone, setWithSomeone] = useState(false);
+
+  useEffect(() => {
+    if (!activeMatchId) {
+      setWithSomeone(false);
+      return undefined;
+    }
+    let stop = false;
+    const pull = () => {
+      api(`/api/matches/${activeMatchId}`)
+        .then((data) => { if (!stop) setWithSomeone(!!data.match?.guest); })
+        .catch(() => { if (!stop) setWithSomeone(false); });
+    };
+    pull();
+    const off = onWs((msg) => {
+      if (msg.type === 'match' || msg.type === 'lobby') pull();
+    });
+    return () => { stop = true; off(); };
+  }, [activeMatchId]);
 
   useEffect(() => {
     if (q.trim().length < 2) {
@@ -123,7 +142,9 @@ export function Shell({ children }) {
         </div>
         <div className="content">{children}<Footer /></div>
       </div>
-      {chatOpen && <Chat />}
+      <div className="chat-slot">
+        {withSomeone ? <LobbyGuide /> : <Chat />}
+      </div>
       <div className="toasts">
         {toasts.map((item) => (
           <div key={item.id} className={`toast ${item.kind}`}>{item.text}</div>
@@ -145,7 +166,7 @@ export function Shell({ children }) {
       )}
       {news && (
         <Modal title="The vault is open" onClose={() => { localStorage.setItem('ogv_news', 'listings'); setNews(false); }}>
-          <p>Go head to head in a 1v1 kill race in your favourite OG project and wager just like the good old days.</p>
+          <p>Go head to head in a Kill Race in your favourite OG project and wager just like the good old days.</p>
           <button className="btn" onClick={() => { localStorage.setItem('ogv_news', 'listings'); setNews(false); }}>Got it</button>
         </Modal>
       )}
@@ -158,7 +179,7 @@ function Footer() {
     <footer className="foot">
       <div className="foot-brand">
         <img src="/logo.png" alt="OGVAULT" />
-        <p>Skill-based 1v1 listings for OG projects. Ready up here, play on Eon or Retrac, and settle the pot in the lobby. Vault Tokens are the ledger on this server.</p>
+        <p>Skill-based Kill Race listings for OG projects. Ready up here, play on Eon or Retrac, and settle the pot in the lobby. Vault Tokens are the ledger on this server.</p>
       </div>
       <div>
         <h2>Play</h2>
@@ -176,6 +197,36 @@ function Footer() {
       </div>
       <p className="fine">18+ only. © {new Date().getFullYear()} OGVAULT. Game titles and marks belong to their owners. This server keeps a local token ledger.</p>
     </footer>
+  );
+}
+
+function LobbyGuide() {
+  return (
+    <aside className="chat">
+      <div className="chat-tabs">
+        <button className="on" type="button">Lobby</button>
+      </div>
+      <div className="chat-log lobby-guide">
+        <h2>How to play</h2>
+        <ol>
+          <li>Create an account and sign in with Discord.</li>
+          <li>Make a lobby on the site, or join one.</li>
+          <li>Both players ready up on the site.</li>
+          <li><strong>You must screen record the entire screen.</strong></li>
+          <li>After the game, report how many kills you got in the private lobby chat and pick who won.</li>
+          <li>If you disagree, both players must upload their footage and vote again. If you still do not agree, press Send for review and a reviewer will decide who won.</li>
+        </ol>
+        <h2>Rules</h2>
+        <ol>
+          <li>You must be 18 or older.</li>
+          <li>No slurs, harassment, or threats.</li>
+          <li>One account per person.</li>
+          <li>Record the full match. A reviewer decides the winner if you still disagree.</li>
+          <li>The winner is paid the pot after the 20% fee.</li>
+          <li>Do not post payment details in public chat.</li>
+        </ol>
+      </div>
+    </aside>
   );
 }
 
@@ -259,7 +310,7 @@ function Chat() {
       {rules && (
         <Modal title="Chat rules" onClose={() => setRules(false)}>
           <ul className="clean">
-            <li>Keep it about the lobby, the 1v1, and the pots.</li>
+            <li>Keep it about the lobby, the Kill Race, and the pots.</li>
             <li>No payment info, no begging, no slurs.</li>
             <li>Reports land with the server. Repeat heat gets the door.</li>
           </ul>
