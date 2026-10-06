@@ -5,6 +5,23 @@ import { useApp } from '../App';
 import { format, pad, parts, useNow, withZone } from '../format';
 import { Amount, Avatar, Name, PageHead } from '../ui';
 
+function Podium({ places }) {
+  const shown = places.filter(Boolean);
+  if (!shown.length) return null;
+  return (
+    <div className="podium">
+      {shown.map((place) => (
+        <article key={place.rank} className={`pod place-${place.rank}`}>
+          <span className="place">{place.rank === 1 ? '1st' : place.rank === 2 ? '2nd' : '3rd'}</span>
+          <Avatar user={place.user} size={place.rank === 1 ? 72 : 56} />
+          <Name user={place.user} link />
+          <strong>{place.detail}</strong>
+        </article>
+      ))}
+    </div>
+  );
+}
+
 export function Leaderboard() {
   const [period, setPeriod] = useState('all');
   const [rows, setRows] = useState([]);
@@ -20,18 +37,25 @@ export function Leaderboard() {
           ))}
         </div>
       </PageHead>
+      <Podium places={rows.slice(0, 3).map((row, index) => ({
+        rank: index + 1,
+        user: row.user,
+        detail: <Amount value={row.value} />,
+      }))} />
+      {rows.length > 3 && (
       <div className="panel">
         <div className="tr head board"><span>#</span><span>Player</span><span>Record</span><span>Tokens</span></div>
-        {rows.map((row, index) => (
+        {rows.slice(3).map((row, index) => (
           <div className="tr board" key={row.user.id}>
-            <span>{index + 1}</span>
+            <span>{index + 4}</span>
             <span className="who"><Avatar user={row.user} size={32} /><Name user={row.user} link /></span>
             <span>{row.user.stats.wins}W-{row.user.stats.losses}L</span>
             <span><Amount value={row.value} /></span>
           </div>
         ))}
-        {!rows.length && <p className="muted">No payouts in this window yet.</p>}
       </div>
+      )}
+      {!rows.length && <p className="muted">No payouts in this window yet.</p>}
     </div>
   );
 }
@@ -60,18 +84,25 @@ export function Potw() {
           <b>{pad(time.s)}<small>s</small></b>
         </div>
       </PageHead>
+      <Podium places={leaders.slice(0, 3).map((user, index) => ({
+        rank: index + 1,
+        user,
+        detail: <Amount value={user.won} />,
+      }))} />
+      {leaders.length > 3 && (
       <div className="panel">
         <div className="tr head board"><span>#</span><span>Player</span><span>Wins</span><span>Tokens won</span></div>
-        {leaders.map((user, index) => (
+        {leaders.slice(3).map((user, index) => (
           <div className="tr board" key={user.id}>
-            <span>{index + 1}</span>
+            <span>{index + 4}</span>
             <span className="who"><Avatar user={user} size={32} /><Name user={user} link /></span>
             <span>{user.wins}</span>
             <span><Amount value={user.won} /></span>
           </div>
         ))}
-        {!leaders.length && <p className="muted">No finished Kill Race payouts this week yet.</p>}
       </div>
+      )}
+      {!leaders.length && <p className="muted">No finished Kill Race payouts this week yet.</p>}
     </div>
   );
 }

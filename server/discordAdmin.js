@@ -18,6 +18,7 @@ import {
   StringSelectMenuOptionBuilder,
 } from 'discord.js';
 import { disputeReviewChannelId } from './discord.js';
+import crypto from 'crypto';
 import {
   INVENTORY_GRANTS,
   credit,
@@ -82,6 +83,36 @@ const commands = [
             .setMaxValue(100)
         )
     ),
+  adminOnly(new SlashCommandBuilder()
+    .setName('account')
+    .setDescription('Look up, reset, or delete a site account')
+    .addSubcommand((sub) =>
+      sub
+        .setName('view')
+        .setDescription('Show email, balance, and when the account was created')
+        .addStringOption((option) =>
+          option.setName('username').setDescription('Site username, email, or Discord username').setRequired(true).setMaxLength(80)
+        )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('reset')
+        .setDescription('Set a new password when they forgot the old one')
+        .addStringOption((option) =>
+          option.setName('username').setDescription('Site username, email, or Discord username').setRequired(true).setMaxLength(80)
+        )
+        .addStringOption((option) =>
+          option.setName('password').setDescription('New password, 8–25 characters with a letter and a number').setRequired(true).setMinLength(8).setMaxLength(25)
+        )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('delete')
+        .setDescription('Delete the site account')
+        .addStringOption((option) =>
+          option.setName('username').setDescription('Site username, email, or Discord username').setRequired(true).setMaxLength(80)
+        )
+    )),
   adminOnly(new SlashCommandBuilder()
     .setName('give')
     .setDescription('Give a Discord role to a member')
@@ -221,9 +252,42 @@ function findAccount(state, username) {
   if (!query) return null;
   return (
     state.users.find((user) => !user.npc && user.username.toLowerCase() === query) ||
+    state.users.find((user) => !user.npc && String(user.email || '').toLowerCase() === query) ||
     state.users.find((user) => !user.npc && String(user.discordUsername || '').toLowerCase() === query) ||
     null
   );
+}
+
+function hashPw(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 32).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function registeredAccount(user) {
+  if (!user) fail(404, 'No player by that name');
+  return user;
+}
+
+function accountDetails(user) {
+  const created = user.createdAt ? `<t:${Math.floor(user.createdAt / 1000)}:f>` : 'Unknown';
+  return [
+    `**Username** ${user.username}`,
+    `**Email** ${user.email || 'None'}`,
+    user.password
+      ? '**Password** Saved as a hash, so the original cannot be shown. Use `/account reset` to set a new one.'
+      : '**Password** None. This account signs in with Discord.',
+    `**Balance** ${round(user.balance || 0)} tokens`,
+    `**Created** ${created}`,
+    `**VIP** ${isVip(user) ? 'Active' : 'No'}`,
+    `**Discord** ${user.discordUsername ? `@${user.discordUsername}` : 'Not linked'}`,
+  ].join('\n');
+}
+
+function openMatch(state, userId) {
+  return (state.matches || []).find((match) => (
+    match.status !== 'done' && (match.hostId === userId || match.guestId === userId)
+  ));
 }
 
 function clearSessions(state, userId) {
@@ -1101,6 +1165,45 @@ async function handleCommand(interaction) {
     return;
   }
   try {
+    if (interaction.commandName === 'account') {
+      const sub = interaction.options.getSubcommand();
+      const query = interaction.options.getString('username');
+      if (sub === 'view') {
+        const user = registeredAccount(findAccount(load(), query));
+        await interaction.reply({ content: accountDetails(user), ephemeral: true });
+        return;
+      }
+      if (sub === 'reset') {
+        const password = String(interaction.options.getString('password') || '');
+        if (password.length < 8 || password.length > 25 || !/[a-zA-Z]/.test(password) || !/\d/.test(password)) {
+          fail(400, 'Password is 8–25 characters with a letter and a number');
+        }
+        const saved = update((state) => {
+          const user = registeredAccount(findAccount(state, query));
+          if (!user.password) fail(400, 'That account signs in with Discord, so there is no password to reset');
+          user.password = hashPw(password);
+          clearSessions(state, user.id);
+          return user.username;
+        });
+        await interaction.reply({
+          content: `Password for **${saved}** is now set. They need to sign in with that new password. The old one cannot be recovered.`,
+          ephemeral: true,
+        });
+        return;
+      }
+      const removed = update((state) => {
+        const user = registeredAccount(findAccount(state, query));
+        if (openMatch(state, user.id)) fail(400, 'Finish their open match before deleting the account');
+        state.users = state.users.filter((item) => item.id !== user.id);
+        for (const other of state.users) {
+          if (Array.isArray(other.friends)) other.friends = other.friends.filter((id) => id !== user.id);
+        }
+        clearSessions(state, user.id);
+        return user.username;
+      });
+      await interaction.reply({ content: `Deleted **${removed}**.`, ephemeral: true });
+      return;
+    }
     if (interaction.commandName === 'tournament' && interaction.options.getSubcommand() === 'create') {
       const cup = createTournament(interaction.options);
       await interaction.reply({
@@ -1320,7 +1423,9 @@ export async function notifyPayment({ method, username, tokens, amount, status, 
 }
 
 const COMMAND_GUIDE = [
-  ['/balance', 'Show a site user token balance.'],
+  ['/account view', 'Show a site account, including Discord sign-ins: email, token balance, created date, VIP, and Discord.'],
+  ['/account reset', 'Set a new password for an email account. Discord-only accounts have no password to reset.'],
+  ['/account delete', 'Delete a site account, including a Discord sign-in, when they are not in an open match.'],
   ['/ban', 'Ban a site account from login and matchmaking for a number of hours.'],
   ['/unban', 'Clear a site ban so the player can sign in again.'],
   ['/blackjack bias', 'Show or set how often a player win is settled for the dealer. 0 is fair, 100 is the maximum edge.'],
