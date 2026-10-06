@@ -306,10 +306,11 @@ label input[type="number"]::-webkit-inner-spin-button {
 .room-log::-webkit-scrollbar-corner {
   background: transparent;
 }
-.chat-log article, .thread { display: flex; gap: 8px; }
-.chat-log header { display: flex; gap: 8px; align-items: center; }
+.chat-log article, .thread { display: flex; gap: 8px; min-width: 0; }
+.chat-log article > div, .thread > div { min-width: 0; }
+.chat-log header { display: flex; gap: 8px; align-items: center; min-width: 0; flex-wrap: wrap; }
 .chat-log time, .chat-log small, .muted, .fine, label small, label span { color: var(--muted); }
-.chat-log p { line-height: 1.4; }
+.chat-log p, .room-log p { line-height: 1.4; overflow-wrap: anywhere; word-break: break-word; max-width: 100%; }
 .chat-form { border-top: 1px solid var(--line); padding: 10px; display: flex; flex-direction: column; gap: 8px; }
 .chat-form input { padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: #0c1018; width: 100%; }
 .chat-form div { display: flex; align-items: center; gap: 8px; justify-content: space-between; }

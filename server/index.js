@@ -40,7 +40,7 @@ import { SHOP, fail, load, rid, round, update } from './store.js';
 import { assertCleanUsername, offensiveName } from './names.js';
 import { checkoutOrigin, createCoinCheckout, handleStripeWebhook } from './checkout.js';
 import { createNowInvoice, handleNowIpn } from './nowpayments.js';
-import { notifyWithdrawal, sendClipReview, setChatClearedHook, setOnlineCount, setReviewSettleHook, startDiscordAdmin, syncGoldVip } from './discordAdmin.js';
+import { clearPublicChat, notifyWithdrawal, sendClipReview, setChatClearedHook, setOnlineCount, setReviewSettleHook, startDiscordAdmin, syncGoldVip } from './discordAdmin.js';
 import {
   consumeDiscordState,
   createDiscordState,
@@ -2141,6 +2141,16 @@ wss.on('connection', (ws) => {
       if (!ws.userId) return send(ws, { type: 'error', error: 'Sign in to talk' });
       const text = String(msg.text || '').trim().slice(0, 180);
       if (!text) return;
+      if (text === '/clear') {
+        const state = load();
+        const user = state.users.find((item) => item.id === ws.userId);
+        const admins = String(process.env.DISCORD_ADMIN_IDS || '').split(/[,\s]+/).map((id) => id.trim()).filter(Boolean);
+        if (!user || !admins.includes(String(user.discordId || ''))) {
+          return send(ws, { type: 'error', error: 'You cannot clear the chat' });
+        }
+        clearPublicChat();
+        return;
+      }
       const now = Date.now();
       if (now - ws.lastChat < 700) return;
       ws.lastChat = now;

@@ -62,9 +62,6 @@ const commands = [
         .addNumberOption((option) => option.setName('third').setDescription('3rd place prize in tokens').setRequired(true).setMinValue(0))
     ),
   adminOnly(new SlashCommandBuilder()
-    .setName('clearchat')
-    .setDescription("Clear the site's public Live Chat")),
-  adminOnly(new SlashCommandBuilder()
     .setName('purge')
     .setDescription('Delete every message in this Discord channel')),
   adminOnly(new SlashCommandBuilder()
@@ -714,7 +711,7 @@ function readOrSetBlackjackBias(percent) {
   });
 }
 
-function clearPublicChat() {
+export function clearPublicChat() {
   const result = update((state) => {
     const removed = Array.isArray(state.chat) ? state.chat.length : 0;
     state.chat = [];
@@ -1212,15 +1209,6 @@ async function handleCommand(interaction) {
       });
       return;
     }
-    if (interaction.commandName === 'clearchat') {
-      const result = clearPublicChat();
-      const count = result.removed;
-      await interaction.reply({
-        content: `Cleared ${count} public Live Chat message${count === 1 ? '' : 's'}.`,
-        ephemeral: true,
-      });
-      return;
-    }
     if (interaction.commandName === 'purge') {
       await interaction.deferReply({ ephemeral: true });
       const removed = await purgeChannel(interaction.channel);
@@ -1429,7 +1417,6 @@ const COMMAND_GUIDE = [
   ['/ban', 'Ban a site account from login and matchmaking for a number of hours.'],
   ['/unban', 'Clear a site ban so the player can sign in again.'],
   ['/blackjack bias', 'Show or set how often a player win is settled for the dealer. 0 is fair, 100 is the maximum edge.'],
-  ['/clearchat', 'Clear the site public Live Chat. This does not clear Discord or match chat.'],
   ['/give', 'Give any Discord role to a member, including Helper, Reviewer, and Content Creator.'],
   ['/giveall tokens', 'Credit tokens to every registered user.'],
   ['/giveall item', 'Grant an inventory item to every registered user.'],
