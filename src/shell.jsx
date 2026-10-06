@@ -68,12 +68,26 @@ export function Shell({ children }) {
           <VaultLogo />
         </NavLink>
         <nav>
-          {NAV.map(([label, to, Icon]) => (
-            <NavLink key={to} to={to} title={label} aria-label={label} className={({ isActive }) => (isActive ? 'active' : '')}>
-              <Icon />
-              <span>{label}</span>
-            </NavLink>
-          ))}
+          {NAV.map(([label, to, Icon]) => {
+            const active = to === '/' ? pathname === '/' : pathname === to || pathname.startsWith(`${to}/`);
+            const go = () => navigate(to);
+            return (
+              <a
+                key={to}
+                role="link"
+                tabIndex={0}
+                title={label}
+                aria-label={label}
+                aria-current={active ? 'page' : undefined}
+                className={active ? 'active' : ''}
+                onClick={go}
+                onKeyDown={(event) => { if (event.key === 'Enter') go(); }}
+              >
+                <Icon />
+                <span>{label}</span>
+              </a>
+            );
+          })}
         </nav>
         <div className="rail-foot">
           <span>18+</span>

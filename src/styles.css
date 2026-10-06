@@ -66,6 +66,8 @@ p { margin: 0; }
 .rail a span { font-size: 15px; line-height: 1.2; font-weight: 500; letter-spacing: -0.01em; }
 .rail nav a {
   position: relative;
+  cursor: pointer;
+  user-select: none;
   transition: color 160ms ease, background-color 160ms ease;
 }
 .rail nav a::before {
