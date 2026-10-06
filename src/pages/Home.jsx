@@ -28,7 +28,7 @@ export function Home({ missing = false }) {
       <section className="hero">
         <div className="hero-copy">
           <img className="hero-logo" src="/logo.png" alt="OGVAULT" />
-          <h1>OG Kill Race. Real pots.</h1>
+          <h1>OG Kill Race Real money earned</h1>
           <p>Go back in time to the days of OG Kill Race like nothing done before. Play for real money and see who really has the skill.</p>
           <div className="hero-cta">
             <Link className="btn" to="/play">Create a Kill Race</Link>
