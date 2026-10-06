@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 export function Token({ size = 14 }) {
   return (
     <svg className="token" width={size} height={size} viewBox="0 0 16 16" aria-hidden="true">
-      <circle cx="8" cy="8" r="7" fill="#2f6bff" />
+      <circle cx="8" cy="8" r="7" fill="#f5c451" />
       <circle cx="8" cy="8" r="3.1" fill="none" stroke="#fff" strokeWidth="1.3" />
       <path d="M8 1.8v2.1M8 12.1v2.1M1.8 8h2.1M12.1 8h2.1" stroke="#fff" strokeWidth="1.2" strokeLinecap="round" />
     </svg>
@@ -76,12 +76,13 @@ export function Avatar({ user, size = 40 }) {
   const [broken, setBroken] = useState(false);
   const photo = !broken && user?.discordAvatarUrl;
   const ring = portraitRing(user?.avatar);
-  const klass = `avatar ${user?.vip ? 'vip' : ''} ${ring}`.trim();
+  const vipFrame = !!user?.vip && !ring;
+  const klass = `avatar ${vipFrame ? 'vip' : ''} ${ring}`.trim();
   const fx = (
     <FrameFx
       heat={user?.avatar === 'avatar-heat'}
       frost={user?.avatar === 'avatar-frost'}
-      vip={!!user?.vip}
+      vip={vipFrame}
     />
   );
   if (photo) {
