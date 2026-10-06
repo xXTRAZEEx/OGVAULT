@@ -3,7 +3,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { api, apiUrl, onWs, sendWs, setToken } from './api';
 import { useApp } from './App';
 import { ago } from './format';
-import { Amount, Avatar, Modal, Name, Token } from './ui';
+import { Amount, Avatar, Modal, Name, Token, VaultLogo } from './ui';
 
 const NAV = [
   ['Home', '/', HomeIcon],
@@ -24,6 +24,11 @@ export function Shell({ children }) {
   const { pathname } = useLocation();
   const showLobbyBar = me && activeMatchId && pathname !== `/match/${activeMatchId}`;
   const [withSomeone, setWithSomeone] = useState(false);
+  const [slim, setSlim] = useState(() => localStorage.getItem('ogv_rail') === 'slim');
+  const toggleRail = () => setSlim((value) => {
+    localStorage.setItem('ogv_rail', value ? 'wide' : 'slim');
+    return !value;
+  });
 
   useEffect(() => {
     if (!activeMatchId) {
@@ -57,10 +62,10 @@ export function Shell({ children }) {
   }, [q]);
 
   return (
-    <div className={`app ${chatOpen ? 'chat-open' : ''}`}>
+    <div className={`app ${chatOpen ? 'chat-open' : ''} ${slim ? 'rail-slim' : ''}`}>
       <aside className="rail">
         <NavLink to="/" className="rail-logo" aria-label="OGVAULT home">
-          <img src="/logo.png" alt="" />
+          <VaultLogo />
         </NavLink>
         <nav>
           {NAV.map(([label, to, Icon]) => (
@@ -70,7 +75,12 @@ export function Shell({ children }) {
             </NavLink>
           ))}
         </nav>
-        <div className="rail-foot">18+</div>
+        <div className="rail-foot">
+          <span>18+</span>
+          <button type="button" className="rail-toggle" onClick={toggleRail} aria-label={slim ? 'Expand sidebar' : 'Collapse sidebar'} title={slim ? 'Expand sidebar' : 'Collapse sidebar'}>
+            <svg viewBox="0 0 24 24"><path d={slim ? 'M9 6l6 6-6 6' : 'M15 6l-6 6 6 6'} /></svg>
+          </button>
+        </div>
       </aside>
       <div className="maincol">
         <div className="top-stack">
@@ -460,13 +470,84 @@ function AuthModal({ mode, onClose, onMode, onDone }) {
   );
 }
 
-function HomeIcon() { return <svg viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z" /></svg>; }
-function PlayIcon() { return <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><path d="M12 8v4l3 2" /></svg>; }
-function BoardIcon() { return <svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16M8 16v-5M12 16V8M16 16v-3" /></svg>; }
-function StarIcon() { return <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3" /><path d="M6 20c1-3 3-4.5 6-4.5S17 17 18 20" /></svg>; }
-function ShopIcon() { return <svg viewBox="0 0 24 24"><path d="M4 8h16l-1 12H5zM8 8V6a4 4 0 0 1 8 0v2" /></svg>; }
-function WalletIcon() { return <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2" /><path d="M3 10h18M16 14h3" /></svg>; }
-function GiftIcon() { return <svg viewBox="0 0 24 24"><path d="M4 11h16v9H4zM3 7h18v4H3zM12 7v13M12 7c-2 0-3-2-2-3s3 0 2 3zM12 7c2 0 3-2 2-3s-3 0-2 3z" /></svg>; }
-function CardIcon() { return <svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="16" rx="2" /><path d="M12 8v4M10 10h4" /></svg>; }
+function HomeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="ico ico-home">
+      <path className="roof" d="M4 10.5 12 4l8 6.5" />
+      <path d="M4 10.5V20a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9.5" />
+      <path className="door" d="M10 21v-6h4v6" />
+    </svg>
+  );
+}
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="ico ico-clock">
+      <circle cx="12" cy="12" r="8" />
+      <path className="hand-min" d="M12 12V7.5" />
+      <path className="hand-hour" d="M12 12l3 2" />
+    </svg>
+  );
+}
+function BoardIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="ico ico-board">
+      <path d="M4 19V5M4 19h16" />
+      <path className="bar b1" d="M8 16v-5" />
+      <path className="bar b2" d="M12 16V8" />
+      <path className="bar b3" d="M16 16v-3" />
+    </svg>
+  );
+}
+function StarIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="ico ico-person">
+      <circle className="head" cx="12" cy="8" r="3" />
+      <path d="M6 20c1-3 3-4.5 6-4.5S17 17 18 20" />
+    </svg>
+  );
+}
+function ShopIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="ico ico-bag">
+      <circle className="coin" cx="12" cy="3" r="1.6" />
+      <g className="bag">
+        <path className="body" d="M4 8h16l-1 12H5z" />
+        <path className="handle" d="M8 8V6a4 4 0 0 1 8 0v2" />
+      </g>
+    </svg>
+  );
+}
+function WalletIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="ico ico-wallet">
+      <rect className="note" x="6" y="3" width="12" height="6" rx="1" />
+      <rect className="body" x="3" y="6" width="18" height="13" rx="2" />
+      <path d="M3 10h18" />
+      <path className="clasp" d="M16 14h3" />
+    </svg>
+  );
+}
+function GiftIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="ico ico-gift">
+      <path d="M4 11h16v9H4zM12 11v9" />
+      <g className="lid">
+        <path d="M3 7h18v4H3zM12 7v4" />
+        <path d="M12 7c-2 0-3-2-2-3s3 0 2 3zM12 7c2 0 3-2 2-3s-3 0-2 3z" />
+      </g>
+    </svg>
+  );
+}
+function CardIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="ico ico-cards">
+      <rect className="card back" x="6" y="3" width="12" height="16" rx="2" />
+      <g className="card front">
+        <rect x="6" y="3" width="12" height="16" rx="2" />
+        <path d="M12 8v4M10 10h4" />
+      </g>
+    </svg>
+  );
+}
 function SearchIcon() { return <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6" /><path d="M16 16l4 4" /></svg>; }
 function ChatIcon() { return <svg viewBox="0 0 24 24"><path d="M5 6h14v9H8l-3 3z" /></svg>; }

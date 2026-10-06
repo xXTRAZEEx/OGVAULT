@@ -11,6 +11,18 @@ export function Token({ size = 14 }) {
   );
 }
 
+export function VaultLogo() {
+  return (
+    <span className="vault-logo">
+      <span className="vault-art">
+        <img src="/logo.png" alt="" />
+        <span className="vault-hole" />
+        <span className="vault-wheel"><img src="/logo.png" alt="" /></span>
+      </span>
+    </span>
+  );
+}
+
 export function Amount({ value, plus = false }) {
   const n = Number(value || 0);
   return (

@@ -6,7 +6,7 @@ import { ago, format, useNow, withZone } from '../format';
 import { Amount, Avatar, Name, PageHead, Token } from '../ui';
 
 export function Home({ missing = false }) {
-  const { rev, setAuth } = useApp();
+  const { rev, setAuth, me } = useApp();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -27,7 +27,6 @@ export function Home({ missing = false }) {
     <div className="home">
       <section className="hero">
         <div className="hero-copy">
-          <img className="hero-logo" src="/logo.png" alt="OGVAULT" />
           <h1>OG Kill Race Real money earned</h1>
           <p>Go back in time to the days of OG Kill Race like nothing done before. Play for real money and see who really has the skill.</p>
           <div className="hero-cta">
@@ -35,17 +34,18 @@ export function Home({ missing = false }) {
             <Link className="btn ghost" to="/how-to-play">How a lobby works</Link>
           </div>
           <div className="stats">
-            <div><span>Players</span><strong>{format(data.stats.users)}</strong></div>
-            <div><span>Tokens won</span><strong><Token /> {format(data.stats.prizes)}</strong></div>
+            <div><span>Online now</span><strong><i className="online-dot" aria-hidden="true" />{format(data.stats.online || 0)}</strong></div>            <div><span>Tokens won</span><strong><Token /> {format(data.stats.prizes)}</strong></div>
             <div><span>Duels</span><strong>{format(data.stats.duels)}</strong></div>
           </div>
         </div>
         <div className="hero-cards">
-          <Link to="/play" className="feature">
-            <RingMark />
-            <h2>Making OG Projects Great Again</h2>
-            <p>Play prime fortnite and particapate in kill races. Making OG Fortnite interesting again. </p>
-          </Link>
+          {me ? <ProfileCard me={me} /> : (
+            <Link to="/play" className="feature">
+              <RingMark />
+              <h2>Making OG Projects Great Again</h2>
+              <p>Play prime fortnite and particapate in kill races. Making OG Fortnite interesting again. </p>
+            </Link>
+          )}
         </div>
       </section>
 
@@ -136,6 +136,29 @@ function ListingExpiry({ expiresAt }) {
       <span>Expires in</span>
       <strong>{label}</strong>
     </div>
+  );
+}
+
+function ProfileCard({ me }) {
+  const stats = me.stats || {};
+  return (
+    <Link to={`/u/${me.username}`} className="feature profile-card">
+      <div className="profile-card-head">
+        <Avatar user={me} size={52} />
+        <div>
+          <strong><Name user={me} label={me.discordName || me.username} /></strong>
+          <span>@{me.username}</span>
+        </div>
+      </div>
+      <div className="profile-card-stats">
+        <div><span>Wins</span><strong>{format(stats.wins || 0)}</strong></div>
+        <div><span>Losses</span><strong>{format(stats.losses || 0)}</strong></div>
+        <div><span>Win rate</span><strong>{stats.winRate || 0}%</strong></div>
+        <div><span>Earned</span><strong><Token /> {format(stats.earned || 0)}</strong></div>
+        <div><span>Streak</span><strong>{stats.streak || 0}</strong></div>
+        <div><span>Best streak</span><strong>{stats.bestStreak || 0}</strong></div>
+      </div>
+    </Link>
   );
 }
 
