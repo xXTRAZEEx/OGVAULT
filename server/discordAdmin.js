@@ -169,6 +169,9 @@ const commands = [
     .addStringOption((option) =>
       option.setName('username').setDescription('Owner only: look up another player').setRequired(false).setMaxLength(64)
     ),
+  new SlashCommandBuilder()
+    .setName('earn')
+    .setDescription('How to earn free tokens with your Discord status'),
   adminOnly(new SlashCommandBuilder()
     .setName('check')
     .setDescription('Owner checks')
@@ -1256,7 +1259,42 @@ async function replyOwnBalance(interaction) {
   });
 }
 
+async function replyEarn(interaction) {
+  const user = load().users.find((item) => !item.npc && item.discordId === interaction.user.id);
+  const presence = statusGuild()?.presences.cache.get(interaction.user.id);
+  const live = showsStatus(presence);
+  const paid = user?.statusPaidDay === statusDay();
+  const minutes = user?.statusDay === statusDay() ? Math.floor((user.statusMs || 0) / 60000) : 0;
+  const embed = new EmbedBuilder()
+    .setColor(0xf5c451)
+    .setTitle(`Earn ${STATUS_RATE} tokens a day`)
+    .setDescription([
+      'Put **`ogvault.co.uk`** in your Discord custom status and keep it there for 1 hour.',
+      '',
+      '**Where it goes**',
+      '1. Click your profile picture in the bottom left of Discord.',
+      '2. Click **Set Custom Status** (or **Edit Custom Status**).',
+      '3. Type `ogvault.co.uk` and set **Clear after** to **Don\'t clear**.',
+      '4. Stay **Online**, **Idle** or **Do Not Disturb**. Invisible does not count.',
+      '',
+      '**Rules**',
+      '• Your Discord must be linked to your OGVAULT account. Sign in with Discord at https://ogvault.co.uk',
+      '• You must stay in this server.',
+      `• Pays ${STATUS_RATE} tokens once per day (resets at midnight UTC).`,
+    ].join('\n'))
+    .addFields(
+      { name: 'Account', value: user ? `Linked as ${user.username}` : 'Not linked yet', inline: true },
+      { name: 'Your status', value: live ? 'Detected ✅' : 'Not detected', inline: true },
+      { name: 'Today', value: paid ? 'Paid ✅' : `${Math.min(minutes, 60)} / 60 minutes`, inline: true },
+    );
+  await interaction.reply({ embeds: [embed], ephemeral: true });
+}
+
 async function handleCommand(interaction) {
+  if (interaction.commandName === 'earn') {
+    await replyEarn(interaction).catch(() => {});
+    return;
+  }
   if (interaction.commandName === 'balance' && !interaction.options.getString('username')) {
     await replyOwnBalance(interaction).catch(() => {});
     return;
@@ -1530,6 +1568,7 @@ const COMMAND_GUIDE = [
   ['/ban', 'Ban a site account from login and matchmaking for a number of hours.'],
   ['/unban', 'Clear a site ban so the player can sign in again.'],
   ['/balance', 'Anyone can see their own tokens and Vault Points. Owners can add a username to look up a player.'],
+  ['/earn', 'Anyone can see how to earn 0.02 tokens a day by putting ogvault.co.uk in their Discord status, and their progress today.'],
   ['/check rate', 'Live count of members showing ogvault.co.uk in their Discord status, and whether yours is detected.'],
   ['/blackjack bias', 'Show or set how often a player win is settled for the dealer. 0 is fair, 100 is the maximum edge.'],
   ['/give', 'Give any Discord role to a member, including Helper, Reviewer, and Content Creator.'],
