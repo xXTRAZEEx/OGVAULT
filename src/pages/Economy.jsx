@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useApp } from '../App';
 import { ago, format, formatDate, useNow } from '../format';
-import { Amount, FrameFx, PageHead, Token } from '../ui';
+import { Amount, FrameFx, PageHead, Points, Select, Token } from '../ui';
 
 const TX = {
   welcome: 'Welcome',
@@ -310,6 +310,50 @@ function dueLabel(readyAt, now) {
   return `${hours}h ${minutes}m left`;
 }
 
+function ReferralBox({ me, onApplied }) {
+  const { toast } = useApp();
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const used = me.referredBy;
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!code.trim() || busy) return;
+    setBusy(true);
+    try {
+      const data = await api('/api/rewards/referral', { method: 'POST', body: { code: code.trim() } });
+      onApplied(data.user);
+      setCode('');
+      toast(`Code applied. You and ${data.referredBy} each got ${data.amount} tokens.`);
+    } catch (err) {
+      toast(err.message, 'bad');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel referral-panel">
+      <div>
+        <h2>Referral code</h2>
+        <p>{used ? 'You have used your one referral code.' : 'Got a code from a friend? You can use one code, once.'}</p>
+      </div>
+      {used ? (
+        <div className="referral-locked">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
+          <span>Used</span>
+          <strong>{used}</strong>
+        </div>
+      ) : (
+        <form className="referral-form" onSubmit={submit}>
+          <input value={code} onChange={(event) => setCode(event.target.value)} placeholder="Enter code" aria-label="Referral code" maxLength={12} />
+          <button className="btn" type="submit" disabled={busy || !code.trim()}>Apply</button>
+        </form>
+      )}
+    </section>
+  );
+}
+
 export function Wallet() {
   const { me, setMe, setAuth, toast } = useApp();
   const now = useNow(30000);
@@ -403,6 +447,7 @@ export function Wallet() {
 
       {tab === 'deposit' && (
         <div className="stack">
+          <ReferralBox me={me} onApplied={(user) => setMe(user)} />
           <div className="wallet-toolbar">
             <label>Custom amount
               <span className="money">
@@ -463,17 +508,16 @@ export function Wallet() {
           }}>
             <div className="wallet-fields">
               <label>Method *
-                <select value={method} onChange={(event) => setMethod(event.target.value)}>
-                  <option value="paypal">PayPal</option>
-                  <option value="crypto">Crypto</option>
-                  <option value="bank">Bank</option>
-                </select>
+                <Select
+                  label="Method"
+                  value={method}
+                  onChange={setMethod}
+                  options={[{ value: 'paypal', label: 'PayPal' }, { value: 'crypto', label: 'Crypto' }, { value: 'bank', label: 'Bank' }]}
+                />
               </label>
               {method === 'crypto' && (
                 <label>Crypto option *
-                  <select value={network} onChange={(event) => setNetwork(event.target.value)}>
-                    {NETWORKS.map((item) => <option key={item} value={item}>{item}</option>)}
-                  </select>
+                  <Select label="Crypto option" value={network} onChange={setNetwork} options={NETWORKS} />
                 </label>
               )}
               {method === 'paypal' && (
@@ -594,13 +638,13 @@ export function Rewards() {
       <div className="wallet-grid">
         <article className="panel">
           <h2>Daily</h2>
-          <p>0.01 tokens.</p>
+          <p className="daily-line"><Amount value={0.01} /> <span>+</span> <Points value={1} /></p>
           <button className="btn" disabled={!me || !!left} onClick={async () => {
             if (!me) { setAuth('in'); return; }
             try {
               const data = await api('/api/rewards/daily', { method: 'POST', body: {} });
               setMe(data.user);
-              toast(`+${data.amount} tokens`);
+              toast(`+${data.amount} tokens and +${data.points || 0} Vault Points`);
             } catch (err) { toast(err.message, 'bad'); }
           }}>{left ? `Ready in ${left}` : 'Claim daily'}</button>
         </article>

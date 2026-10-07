@@ -163,12 +163,16 @@ const commands = [
         .setDescription('Hours or days')
         .addChoices({ name: 'Hours', value: 'hours' }, { name: 'Days', value: 'days' })
     )),
-  adminOnly(new SlashCommandBuilder()
+  new SlashCommandBuilder()
     .setName('balance')
-    .setDescription('Show a site user token balance')
+    .setDescription('Show your OGVAULT tokens and Vault Points')
     .addStringOption((option) =>
-      option.setName('username').setDescription('Site username or Discord username').setRequired(true).setMaxLength(64)
-    )),
+      option.setName('username').setDescription('Owner only: look up another player').setRequired(false).setMaxLength(64)
+    ),
+  adminOnly(new SlashCommandBuilder()
+    .setName('check')
+    .setDescription('Owner checks')
+    .addSubcommand((sub) => sub.setName('rate').setDescription('Live count of members with the OGVAULT status'))),
   adminOnly(new SlashCommandBuilder()
     .setName('inventory')
     .setDescription('Show a site user inventory and add or remove items')
@@ -491,7 +495,7 @@ function listWithdrawals() {
 function userBalance(username) {
   const user = findAccount(load(), username);
   if (!user) fail(404, 'No player by that name');
-  return { username: user.username, balance: round(user.balance) };
+  return { username: user.username, balance: round(user.balance), points: Math.round(user.points || 0) };
 }
 
 function inventoryMessage(user) {
@@ -1151,7 +1155,112 @@ async function handleCommunityButton(interaction) {
   }
 }
 
+const STATUS_RATE = 0.02;
+const STATUS_NEED_MS = 60 * 60 * 1000;
+const STATUS_TICK_MS = 5 * 60 * 1000;
+let presenceEnabled = false;
+
+function statusKeywords() {
+  const extra = String(process.env.STATUS_KEYWORDS || '').split(',').map((word) => word.trim().toLowerCase()).filter(Boolean);
+  return ['ogvault.co.uk', ...extra];
+}
+
+function customStatus(presence) {
+  const activity = (presence?.activities || []).find((item) => item.type === ActivityType.Custom);
+  return String(activity?.state || '');
+}
+
+function showsStatus(presence) {
+  if (!presence || presence.status === 'offline') return false;
+  const text = customStatus(presence).toLowerCase();
+  return statusKeywords().some((word) => text.includes(word));
+}
+
+function statusGuild() {
+  const guildId = String(process.env.DISCORD_GUILD_ID || '').trim();
+  return bot?.guilds?.cache?.get(guildId) || null;
+}
+
+function liveStatusIds() {
+  const guild = statusGuild();
+  if (!guild) return [];
+  return [...guild.presences.cache.values()].filter(showsStatus).map((presence) => presence.userId);
+}
+
+function statusDay() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function tickStatusRewards() {
+  const ids = new Set(liveStatusIds());
+  if (!ids.size) return;
+  const day = statusDay();
+  const now = Date.now();
+  update((state) => {
+    for (const user of state.users) {
+      if (user.npc || !user.discordId || !ids.has(user.discordId)) continue;
+      if (user.banUntil > now) continue;
+      if (user.vpnLastAt && now - user.vpnLastAt < 24 * 60 * 60 * 1000) continue;
+      if (user.statusDay !== day) {
+        user.statusDay = day;
+        user.statusMs = 0;
+      }
+      user.statusMs = (user.statusMs || 0) + STATUS_TICK_MS;
+      if (user.statusMs >= STATUS_NEED_MS && user.statusPaidDay !== day) {
+        credit(state, user, STATUS_RATE, 'status', { note: 'discord-status' });
+        user.statusPaidDay = day;
+      }
+    }
+  });
+}
+
+async function replyStatusRate(interaction) {
+  if (!presenceEnabled) {
+    await interaction.reply({
+      content: 'Status tracking is off. Turn on **Presence Intent** for the bot in the Discord Developer Portal, then restart the API.',
+      ephemeral: true,
+    });
+    return;
+  }
+  const ids = liveStatusIds();
+  const state = load();
+  const day = statusDay();
+  const linked = ids.map((id) => state.users.find((user) => !user.npc && user.discordId === id)).filter(Boolean);
+  const paidToday = state.users.filter((user) => user.statusPaidDay === day).length;
+  const mine = statusGuild()?.presences.cache.get(interaction.user.id);
+  const names = ids.slice(0, 25).map((id) => {
+    const user = state.users.find((item) => !item.npc && item.discordId === id);
+    return user ? `• ${user.username}` : `• <@${id}> (not linked)`;
+  });
+  await interaction.reply({
+    content: [
+      `**Live now** ${ids.length} member${ids.length === 1 ? '' : 's'} showing the status (${linked.length} linked to a site account)`,
+      `**Your status** ${showsStatus(mine) ? 'Detected ✅' : `Not detected${mine ? ` (currently: "${customStatus(mine) || 'none'}", ${mine.status})` : ' (offline or invisible)'}`}`,
+      `**Paid today** ${paidToday} · rate ${STATUS_RATE} tokens a day after 1 hour with the status`,
+      names.length ? names.join('\n') : '',
+    ].filter(Boolean).join('\n'),
+    ephemeral: true,
+    allowedMentions: { parse: [] },
+  });
+}
+
+async function replyOwnBalance(interaction) {
+  const user = load().users.find((item) => !item.npc && item.discordId === interaction.user.id);
+  if (!user) {
+    await interaction.reply({ content: 'Your Discord is not linked to an OGVAULT account yet. Sign in at https://ogvault.co.uk with Discord.', ephemeral: true });
+    return;
+  }
+  await interaction.reply({
+    content: `**${user.username}**\nTokens: ${Number(round(user.balance || 0)).toFixed(2)}\nVault Points: ${Math.round(user.points || 0)}`,
+    ephemeral: true,
+  });
+}
+
 async function handleCommand(interaction) {
+  if (interaction.commandName === 'balance' && !interaction.options.getString('username')) {
+    await replyOwnBalance(interaction).catch(() => {});
+    return;
+  }
   const allowed = adminIds();
   if (!allowed.length) {
     await interaction.reply({ content: 'Admin is not configured', ephemeral: true });
@@ -1287,9 +1396,13 @@ async function handleCommand(interaction) {
     if (interaction.commandName === 'balance') {
       const result = userBalance(interaction.options.getString('username'));
       await interaction.reply({
-        content: `${result.username} has ${Number(result.balance).toFixed(2)} tokens.`,
+        content: `${result.username} has ${Number(result.balance).toFixed(2)} tokens and ${result.points} Vault Points.`,
         ephemeral: true,
       });
+      return;
+    }
+    if (interaction.commandName === 'check' && interaction.options.getSubcommand() === 'rate') {
+      await replyStatusRate(interaction);
       return;
     }
     if (interaction.commandName === 'inventory') {
@@ -1416,6 +1529,8 @@ const COMMAND_GUIDE = [
   ['/account delete', 'Delete a site account, including a Discord sign-in, when they are not in an open match.'],
   ['/ban', 'Ban a site account from login and matchmaking for a number of hours.'],
   ['/unban', 'Clear a site ban so the player can sign in again.'],
+  ['/balance', 'Anyone can see their own tokens and Vault Points. Owners can add a username to look up a player.'],
+  ['/check rate', 'Live count of members showing ogvault.co.uk in their Discord status, and whether yours is detected.'],
   ['/blackjack bias', 'Show or set how often a player win is settled for the dealer. 0 is fair, 100 is the maximum edge.'],
   ['/give', 'Give any Discord role to a member, including Helper, Reviewer, and Content Creator.'],
   ['/giveall tokens', 'Credit tokens to every registered user.'],
@@ -1488,7 +1603,9 @@ async function publishCommandGuide(guild) {
   else await channel.send({ embeds });
 }
 
-export function startDiscordAdmin() {
+let statusTimer = null;
+
+export function startDiscordAdmin(withPresence = true) {
   const token = String(process.env.DISCORD_BOT_TOKEN || '').trim();
   if (!token) {
     console.log('Discord admin commands are not configured');
@@ -1496,8 +1613,15 @@ export function startDiscordAdmin() {
   }
   const guildId = String(process.env.DISCORD_GUILD_ID || '').trim();
   botFailed = false;
-  const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+  const intents = withPresence ? [GatewayIntentBits.Guilds, GatewayIntentBits.GuildPresences] : [GatewayIntentBits.Guilds];
+  const client = new Client({ intents });
   bot = client;
+  presenceEnabled = withPresence;
+  if (withPresence && !statusTimer) {
+    statusTimer = setInterval(() => {
+      try { tickStatusRewards(); } catch { console.error('Status reward tick failed'); }
+    }, STATUS_TICK_MS);
+  }
   client.once('ready', async () => {
     if (!/^\d{5,32}$/.test(guildId)) {
       console.log('DISCORD_GUILD_ID is missing; Discord slash commands were not registered');
@@ -1566,7 +1690,13 @@ export function startDiscordAdmin() {
   client.on('error', () => {
     console.error('Discord admin bot error');
   });
-  client.login(token).catch(() => {
+  client.login(token).catch((error) => {
+    if (withPresence && /disallowed intents/i.test(String(error?.message || ''))) {
+      console.error('Presence Intent is off in the Discord Developer Portal; status rewards are disabled');
+      Promise.resolve().then(() => client.destroy()).catch(() => {});
+      startDiscordAdmin(false);
+      return;
+    }
     botFailed = true;
     console.error('Discord admin bot could not log in');
   });

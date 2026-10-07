@@ -193,7 +193,7 @@ export function HowTo() {
       </section>
       <section className="panel">
         <h2>Around the lobby</h2>
-        <p>Cups turn finished Kill Races into points. The shop sells VIP, snipes, and streak shields. A snipe shows another player's record, on their profile or before you ready up. A shield keeps your streak after one loss. Player of the week pays 15, 10, and 5 tokens to the players who won the most from finished Kill Races.</p>
+        <p>Cups turn finished Kill Races into points. The shop sells VIP, snipes, and streak shields. A snipe shows another player's record, on their profile or before you ready up. A shield keeps your streak after one loss. Weekly Vault pays 8, 4, and 2 tokens to the players who earned the most silver Vault Points that week.</p>
         <p><Link to="/play">Open a listing</Link></p>
       </section>
     </div>

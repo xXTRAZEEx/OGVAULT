@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, apiUrl, onWs, sendWs } from '../api';
 import { useApp } from '../App';
 import { formatDate, useNow } from '../format';
-import { Amount, Avatar, Modal, Name } from '../ui';
+import { Amount, Avatar, Modal, Name, Stake } from '../ui';
 
 const STEPS = [
   ['waiting', 'Waiting'],
@@ -104,12 +104,12 @@ function Listing({ match, me, act, id, toast, setAuth }) {
         <div className="stake">
           <div>
             <span>Entry</span>
-            <Amount value={match.entry} />
+            <Stake value={match.entry} currency={match.currency} />
           </div>
           <b aria-hidden="true">→</b>
           <div className="prize">
             <span>Prize</span>
-            <Amount value={match.pot} />
+            <Stake value={match.pot} currency={match.currency} />
           </div>
         </div>
       </section>
@@ -154,7 +154,7 @@ function Listing({ match, me, act, id, toast, setAuth }) {
           )}
           {!youIn && match.status === 'open' && (
             <button className="btn ready" onClick={() => act(`/api/matches/${id}/join`, {}, 'You are in the lobby.')}>
-              Join · <Amount value={match.entry} />
+              Join · <Stake value={match.entry} currency={match.currency} />
             </button>
           )}
           {youIn && !locked && (
@@ -427,7 +427,12 @@ function Done({ match, me, onRematch, onDecline }) {
   return (
     <div className="report">
       <p>{tie ? 'Split. Entries refunded.' : won ? 'You took the prize.' : winner ? `${winner.username} took the prize.` : 'Lobby closed.'}</p>
-      {!tie && !match.practice && <p className="payout"><Amount value={match.payout} /> paid, after the 20% fee.</p>}
+      {!tie && !match.practice && (
+        <p className="payout">
+          <Stake value={match.payout} currency={match.currency} />
+          {match.currency === 'points' ? ' Vault Points paid.' : ' paid, after the 20% fee.'}
+        </p>
+      )}
       {waiting && <p className="muted">Waiting for {other?.username || 'the other player'} to accept the rematch.</p>}
       {incoming && <p>{ask.username} wants a rematch.</p>}
       {incoming ? (

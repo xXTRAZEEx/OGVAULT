@@ -1,5 +1,70 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+
+export function Select({ value, onChange, options, label }) {
+  const [open, setOpen] = useState(false);
+  const [hot, setHot] = useState(0);
+  const root = useRef(null);
+  const items = options.map((item) => (typeof item === 'string' ? { value: item, label: item } : item));
+  const current = items.find((item) => item.value === value) || items[0];
+
+  useEffect(() => {
+    if (!open) return undefined;
+    setHot(Math.max(0, items.findIndex((item) => item.value === value)));
+    const close = (event) => { if (!root.current?.contains(event.target)) setOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+
+  const pick = (item) => { onChange(item.value); setOpen(false); };
+  const onKey = (event) => {
+    if (event.key === 'Escape') { setOpen(false); return; }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (!open) { setOpen(true); return; }
+      const step = event.key === 'ArrowDown' ? 1 : -1;
+      setHot((index) => (index + step + items.length) % items.length);
+    }
+    if ((event.key === 'Enter' || event.key === ' ') && open) {
+      event.preventDefault();
+      pick(items[hot]);
+    }
+  };
+
+  return (
+    <div className={`select ${open ? 'open' : ''}`} ref={root}>
+      <button
+        type="button"
+        className="select-trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={label}
+        onClick={(event) => { event.preventDefault(); setOpen((v) => !v); }}
+        onKeyDown={onKey}
+      >
+        <span>{current?.label}</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5" /></svg>
+      </button>
+      {open && (
+        <ul className="select-menu" role="listbox">
+          {items.map((item, index) => (
+            <li
+              key={item.value}
+              role="option"
+              aria-selected={item.value === value}
+              className={`${item.value === value ? 'on' : ''} ${index === hot ? 'hot' : ''}`}
+              onMouseEnter={() => setHot(index)}
+              onMouseDown={(event) => { event.preventDefault(); pick(item); }}
+            >
+              <span>{item.label}</span>
+              {item.value === value && <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 export function Token({ size = 14 }) {
   return (
@@ -21,6 +86,29 @@ export function VaultLogo() {
       </span>
     </span>
   );
+}
+
+export function PointIcon({ size = 14 }) {
+  return (
+    <svg className="point-icon" width={size} height={size} viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="7" fill="#c9d1dc" />
+      <circle cx="8" cy="8" r="5.4" fill="none" stroke="#8e98a8" strokeWidth="1" />
+      <path d="M8 4.4l1.05 2.3 2.5.25-1.9 1.7.55 2.45L8 9.85 5.8 11.1l.55-2.45-1.9-1.7 2.5-.25z" fill="#5d6675" />
+    </svg>
+  );
+}
+
+export function Points({ value }) {
+  return (
+    <span className="points">
+      <PointIcon />
+      <span>{Number(value || 0).toLocaleString()}</span>
+    </span>
+  );
+}
+
+export function Stake({ value, currency }) {
+  return currency === 'points' ? <Points value={value} /> : <Amount value={value} />;
 }
 
 export function Amount({ value, plus = false }) {
@@ -128,6 +216,33 @@ export function Name({ user, link = false, label }) {
   );
   if (!link) return body;
   return <Link to={`/u/${user.username}`}>{body}</Link>;
+}
+
+export function VpnNotice() {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const show = () => setOpen(true);
+    window.addEventListener('ogv:vpn', show);
+    if (/VPN detected/i.test(decodeURIComponent(window.location.hash))) setOpen(true);
+    return () => window.removeEventListener('ogv:vpn', show);
+  }, []);
+  if (!open) return null;
+  return (
+    <div className="modal-back vpn-back">
+      <div className="modal vpn-modal" role="alertdialog" aria-labelledby="vpn-title">
+        <div className="vpn-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6l8-3z" />
+            <path d="M12 8v5" />
+            <path d="M12 16.5h.01" />
+          </svg>
+        </div>
+        <h2 id="vpn-title">VPN detected</h2>
+        <p>Turn off your VPN to prevent further sanctions. OGVAULT allows one account per network, and VPNs or proxies are not allowed.</p>
+        <button className="btn" onClick={() => window.location.reload()}>I turned it off</button>
+      </div>
+    </div>
+  );
 }
 
 export function Modal({ title, onClose, children, wide = false }) {

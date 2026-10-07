@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
 import { useApp } from '../App';
 import { format, pad, parts, useNow, withZone } from '../format';
-import { Amount, Avatar, Name, PageHead } from '../ui';
+import { Amount, Avatar, Name, PageHead, Points } from '../ui';
 
 function Podium({ places }) {
   const shown = places.filter(Boolean);
@@ -76,7 +76,7 @@ export function Potw() {
   const leaders = data.potw.leaders || [];
   return (
     <div className="stack-lg">
-      <PageHead kicker="Community" title="Player of the week" text="Ranked by the winner payout credited on finished Kill Races this week. The top three take 15, 10, and 5 when the week closes.">
+      <PageHead kicker="Silver Vault Points" title="Weekly Vault" text="Earn points from your daily claim and every Kill Race you finish. The top three this week take 8, 4, and 2 tokens when the clock hits zero.">
         <div className="cd">
           <b>{pad(time.d)}<small>d</small></b>
           <b>{pad(time.h)}<small>h</small></b>
@@ -84,25 +84,37 @@ export function Potw() {
           <b>{pad(time.s)}<small>s</small></b>
         </div>
       </PageHead>
+      <div className="weekly-prizes">
+        {[['1st', 8], ['2nd', 4], ['3rd', 2]].map(([place, prize], index) => (
+          <div key={place} className={`weekly-prize place-${index + 1}`}>
+            <span>{place}</span>
+            <strong><Amount value={prize} /></strong>
+          </div>
+        ))}
+        <div className="weekly-earn">
+          <span>How to earn</span>
+          <p><Points value={1} /> daily claim · <Points value={5} /> per token Kill Race win · play Kill Races for Vault Points too</p>
+        </div>
+      </div>
       <Podium places={leaders.slice(0, 3).map((user, index) => ({
         rank: index + 1,
         user,
-        detail: <Amount value={user.won} />,
+        detail: <Points value={user.points} />,
       }))} />
       {leaders.length > 3 && (
       <div className="panel">
-        <div className="tr head board"><span>#</span><span>Player</span><span>Wins</span><span>Tokens won</span></div>
+        <div className="tr head board"><span>#</span><span>Player</span><span>Wins</span><span>Points</span></div>
         {leaders.slice(3).map((user, index) => (
           <div className="tr board" key={user.id}>
             <span>{index + 4}</span>
             <span className="who"><Avatar user={user} size={32} /><Name user={user} link /></span>
             <span>{user.wins}</span>
-            <span><Amount value={user.won} /></span>
+            <span><Points value={user.points} /></span>
           </div>
         ))}
       </div>
       )}
-      {!leaders.length && <p className="muted">No finished Kill Race payouts this week yet.</p>}
+      {!leaders.length && <p className="muted">No points earned this week yet. Claim your daily or finish a Kill Race to get on the board.</p>}
     </div>
   );
 }

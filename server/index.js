@@ -22,9 +22,16 @@ import {
   matchDto,
   sparringTestMatch,
   POTW_PRIZES,
+  POINTS,
+  chargeEntry,
+  creditPoints,
+  isPointsMatch,
+  matchPrize,
+  refundEntry,
   potwLeaders,
   potwWindow,
   referralBonus,
+  usedReferral,
   resolveMatch,
   settleAgreed,
   sendTip,
@@ -38,6 +45,7 @@ import {
 import { blackjackView, dealBlackjack, doubleBlackjack, hitBlackjack, standBlackjack } from './blackjack.js';
 import { SHOP, fail, load, rid, round, update } from './store.js';
 import { assertCleanUsername, offensiveName } from './names.js';
+import { IP_MESSAGE, VPN_MESSAGE, assertIpFree, claimIp, clientIp, ipOwner, isVpn, ownsIp } from './guard.js';
 import { checkoutOrigin, createCoinCheckout, handleStripeWebhook } from './checkout.js';
 import { createNowInvoice, handleNowIpn } from './nowpayments.js';
 import { clearPublicChat, notifyWithdrawal, sendClipReview, setChatClearedHook, setOnlineCount, setReviewSettleHook, startDiscordAdmin, syncGoldVip } from './discordAdmin.js';
@@ -108,6 +116,45 @@ app.use((req, res, next) => {
     return;
   }
   res.status(503).json({ error: status.reason });
+});
+
+app.use(async (req, res, next) => {
+  if (!req.path.startsWith('/api/') || req.path === '/api/health' || req.path === '/api/stripe/webhook' || req.path === '/api/nowpayments/ipn') {
+    next();
+    return;
+  }
+  const ip = clientIp(req);
+  req.clientIp = ip;
+  try {
+    if (await isVpn(ip)) {
+      const user = currentUser(req);
+      if (user) {
+        update((state) => {
+          const row = state.users.find((item) => item.id === user.id);
+          if (row) {
+            row.vpnHits = (row.vpnHits || 0) + 1;
+            row.vpnLastAt = Date.now();
+          }
+        });
+      }
+      if (req.path === '/api/auth/discord/callback') {
+        discordReturn(res, { discord_error: VPN_MESSAGE });
+        return;
+      }
+      res.status(403).json({ error: VPN_MESSAGE, vpn: true });
+      return;
+    }
+    const user = currentUser(req);
+    if (user && req.path !== '/api/auth/logout' && !ownsIp(load(), ip, user)) {
+      update((state) => {
+        const row = state.users.find((item) => item.id === user.id);
+        claimIp(state, ip, row);
+      });
+    }
+    next();
+  } catch (error) {
+    sendRouteError(res, error);
+  }
 });
 
 const sockets = new Set();
@@ -317,7 +364,7 @@ function potwDto(state) {
     if (!user) return [];
     return [{
       ...userDto(user, { online: online.has(user.id) }),
-      won: row.won,
+      points: row.points,
       wins: row.wins,
       reward: POTW_PRIZES[index] || 0,
     }];
@@ -358,11 +405,12 @@ const LIVE_MATCH = new Set(['open', 'staging', 'playing', 'live', 'result', 'dis
 
 function paidOrRefunded(state, match, userId) {
   if (!userId) return false;
-  return (state.txs || []).some((row) =>
+  const rows = isPointsMatch(match) ? state.pointTxs || [] : state.txs || [];
+  return rows.some((row) =>
     row.userId === userId
     && row.meta
     && row.meta.match === match.id
-    && (row.type === 'refund' || row.type === 'win')
+    && (row.type === 'refund' || row.type === 'win' || row.type === 'prize')
     && row.amount > 0
   );
 }
@@ -416,7 +464,7 @@ function refundEntryOnce(state, match, userId) {
   if (paidOrRefunded(state, match, userId)) return;
   const person = state.users.find((user) => user.id === userId);
   if (!person) return;
-  credit(state, person, match.entry, 'refund', { match: match.id });
+  refundEntry(state, person, match);
 }
 
 function closeFinishedMatches(state) {
@@ -427,7 +475,9 @@ function closeFinishedMatches(state) {
       continue;
     }
     if (!reportsAgree(match)) continue;
-    const paid = (state.txs || []).some((row) => row.meta && row.meta.match === match.id && row.type === 'win' && row.amount > 0);
+    const paid = isPointsMatch(match)
+      ? (state.pointTxs || []).some((row) => row.meta && row.meta.match === match.id && row.type === 'prize' && row.amount > 0)
+      : (state.txs || []).some((row) => row.meta && row.meta.match === match.id && row.type === 'win' && row.amount > 0);
     if (paid) match.status = 'done';
     else settleAgreed(state, match, match.reports[match.hostId]);
   }
@@ -461,7 +511,7 @@ function expireListings(state) {
     const refund = (userId) => {
       const person = state.users.find((user) => user.id === userId);
       if (!person || match.practice || match.entry <= 0) return;
-      credit(state, person, match.entry, 'refund', { match: match.id });
+      refundEntry(state, person, match);
     };
     refund(match.hostId);
     if (match.guestId) refund(match.guestId);
@@ -517,6 +567,7 @@ app.post(
       fail(400, 'Password is 8–25 characters with a letter and a number');
     }
     const result = update((state) => {
+      assertIpFree(state, req.clientIp, null);
       if (state.users.some((user) => user.email === email)) fail(400, 'That email is already in the vault');
       if (state.users.some((user) => user.username.toLowerCase() === username.toLowerCase())) {
         fail(400, 'That username is taken');
@@ -551,8 +602,10 @@ app.post(
           const bonus = referralBonus(host);
           credit(state, user, bonus, 'referral', { from: host.username });
           credit(state, host, bonus, 'referral', { from: user.username });
+          user.referredBy = host.referral;
         }
       }
+      claimIp(state, req.clientIp, user);
       const token = crypto.randomBytes(24).toString('hex');
       state.sessions[token] = user.id;
       return { token, user: userDto(user, { self: true }) };
@@ -572,6 +625,7 @@ app.post(
       );
       if (!user || !checkPw(password, user.password)) fail(401, 'Email or password is wrong');
       if (user.banUntil > Date.now()) fail(403, 'This account is banned');
+      claimIp(state, req.clientIp, user);
       const token = crypto.randomBytes(24).toString('hex');
       state.sessions[token] = user.id;
       return { token, user: userDto(user, { self: true, online: true }) };
@@ -598,8 +652,9 @@ function vaultNameFromDiscord(state, discordUsername) {
   return `p${crypto.randomBytes(4).toString('hex')}`.slice(0, 12);
 }
 
-function acceptDiscord(state, profile) {
+function acceptDiscord(state, profile, ip) {
   let user = state.users.find((item) => !item.npc && item.discordId === profile.id);
+  if (ipOwner(state, ip) && ipOwner(state, ip).id !== user?.id) return { ipTaken: true };
   let created = false;
   if (user) {
     user.discordUsername = profile.username;
@@ -636,6 +691,7 @@ function acceptDiscord(state, profile) {
     state.users.push(user);
   }
   if (user.banUntil > Date.now()) return { banned: true };
+  claimIp(state, ip, user);
   const token = crypto.randomBytes(24).toString('hex');
   state.sessions[token] = user.id;
   return { token, created };
@@ -695,7 +751,11 @@ app.get(
         return;
       }
       const profile = await fetchDiscordIdentity(code);
-      const result = update((draft) => acceptDiscord(draft, profile));
+      const result = update((draft) => acceptDiscord(draft, profile, req.clientIp));
+      if (result.ipTaken) {
+        discordReturn(res, { discord_error: IP_MESSAGE });
+        return;
+      }
       const linked = load().users.find((item) => !item.npc && item.discordId === profile.id);
       if (linked) syncGoldVip(linked).catch(() => {});
       if (result.banned) {
@@ -855,7 +915,7 @@ app.get(
     } else {
       const totals = new Map();
       for (const row of state.history) {
-        if (row.at < window.start || row.at >= window.endsAt || !row.winnerId || row.practice) continue;
+        if (row.at < window.start || row.at >= window.endsAt || !row.winnerId || row.practice || row.currency === 'points') continue;
         const profit = Math.max(0, round((row.payout || 0) - row.entry));
         totals.set(row.winnerId, round((totals.get(row.winnerId) || 0) + profit));
       }
@@ -1010,7 +1070,9 @@ app.post(
     const region = req.body.region;
     const platform = PLATFORMS.includes(req.body.platform) ? req.body.platform : 'PC';
     const firstTo = 1;
-    if (!practice && entry == null) fail(400, 'Entry must be at least 1 token');
+    const currency = req.body.currency === 'points' ? 'points' : 'tokens';
+    if (!practice && entry == null) fail(400, currency === 'points' ? 'Entry must be at least 1 Vault Point' : 'Entry must be at least 1 token');
+    if (currency === 'points' && !Number.isInteger(entry)) fail(400, 'Vault Point entries are whole numbers');
     const result = update((state) => {
       assertMatchmakingOpen(state);
       const user = state.users.find((item) => item.id === me.id);
@@ -1022,8 +1084,8 @@ app.post(
       ).length;
       if (openCount >= 3) fail(400, 'You already have three tables open');
       if (practice) fail(400, 'Open a real listing');
-      debit(state, user, entry, 'entry', {});
-      const match = freshMatch({ host: user, entry, project, mode, region, platform, firstTo });
+      const match = freshMatch({ host: user, entry, project, mode, region, platform, firstTo, currency });
+      chargeEntry(state, user, match);
       state.matches.unshift(match);
       return { match: matchDto(state, match, user.id), user: userDto(user, { self: true }) };
     });
@@ -1047,7 +1109,7 @@ app.post(
           match.status === 'open' &&
           !match.invitee &&
           match.hostId !== user.id &&
-          match.entry <= user.balance &&
+          match.entry <= (isPointsMatch(match) ? user.points || 0 : user.balance) &&
           match.entry > 0
       );
       if (table) {
@@ -1072,7 +1134,7 @@ function joinMatch(state, match, user) {
   if (match.invitee && match.invitee.toLowerCase() !== user.username.toLowerCase()) {
     fail(403, 'This table is a direct challenge');
   }
-  if (!match.practice && match.entry > 0) debit(state, user, match.entry, 'entry', { match: match.id });
+  chargeEntry(state, user, match);
   match.guestId = user.id;
   match.status = 'staging';
   match.guestReady = false;
@@ -1251,7 +1313,7 @@ app.post(
       }
       const refund = (person) => {
         if (!person || match.practice || match.entry <= 0) return;
-        credit(state, person, match.entry, 'refund', { match: match.id });
+        refundEntry(state, person, match);
       };
       if (match.status === 'open' && match.hostId === user.id) {
         refund(user);
@@ -1576,7 +1638,7 @@ app.post(
             field('Entry', String(match.entry)),
             field('Guest', guest.username),
             field('Guest claimed', guestClaim),
-            field('Prize', String(listingPrize(match.entry))),
+            field('Prize', isPointsMatch(match) ? `${matchPrize(match)} Vault Points` : String(listingPrize(match.entry))),
           ],
           footer: { text: 'Green awards the host. Red awards the guest. Each award works once.' },
         }],
@@ -1723,17 +1785,19 @@ app.post(
         if (next) return { match: matchDto(state, next, user.id), user: userDto(user, { self: true }) };
       }
       const ask = prev.rematchAsk;
+      const pts = isPointsMatch(prev);
+      const funds = (person) => (pts ? person.points || 0 : person.balance);
+      const unit = pts ? 'Vault Points' : 'tokens';
       if (!ask || ask.fromId === user.id) {
-        if (user.balance < prev.entry) fail(400, 'Not enough tokens for the same entry');
+        if (funds(user) < prev.entry) fail(400, `Not enough ${unit} for the same entry`);
         prev.rematchAsk = { fromId: user.id, at: Date.now() };
         const note = pushMatchLine(prev, `${user.username} wants a rematch`);
         return { match: matchDto(state, prev, user.id), user: userDto(user, { self: true }), note };
       }
       if (ask.fromId !== otherId) fail(400, 'That rematch request is no longer open');
-      if (user.balance < prev.entry) fail(400, 'Not enough tokens for the same entry');
-      if (other.balance < prev.entry) fail(400, `${other.username} does not have enough tokens`);
+      if (funds(user) < prev.entry) fail(400, `Not enough ${unit} for the same entry`);
+      if (funds(other) < prev.entry) fail(400, `${other.username} does not have enough ${unit}`);
       if (busy(state, user.id) || busy(state, other.id)) fail(400, 'Finish your open Kill Race before joining another');
-      debit(state, other, prev.entry, 'entry', {});
       const match = freshMatch({
         host: other,
         entry: prev.entry,
@@ -1742,7 +1806,9 @@ app.post(
         region: prev.region,
         platform: prev.platform,
         firstTo: prev.firstTo,
+        currency: prev.currency,
       });
+      chargeEntry(state, other, match);
       state.matches.unshift(match);
       joinMatch(state, match, user);
       prev.rematchId = match.id;
@@ -1779,11 +1845,14 @@ app.get(
   route((req, res) => {
     const me = requireUser(req);
     const state = load();
-    const due = (state.withdrawals || []).some((row) => row.status === 'pending' && row.readyAt <= Date.now());
+    const stored = state.users.find((item) => item.id === me.id);
+    const backfill = !!stored && !stored.referredBy && !!usedReferral(state, stored, { save: false });
+    const due = backfill || (state.withdrawals || []).some((row) => row.status === 'pending' && row.readyAt <= Date.now());
     const view = (current) => {
       settleWithdrawals(current);
       const user = current.users.find((item) => item.id === me.id);
       if (!user) fail(401, 'Sign in again');
+      usedReferral(current, user);
       return walletSnapshot(current, user);
     };
     res.json(due ? update(view) : view(state));
@@ -1956,6 +2025,29 @@ app.post(
 );
 
 app.post(
+  '/api/rewards/referral',
+  route((req, res) => {
+    const me = requireUser(req);
+    const code = String(req.body.code || '').trim();
+    if (!code) fail(400, 'Enter a referral code');
+    const result = update((state) => {
+      const user = state.users.find((item) => item.id === me.id);
+      if (usedReferral(state, user)) fail(400, 'You have already used a referral code');
+      const host = state.users.find((item) => item.referral && item.referral.toLowerCase() === code.toLowerCase());
+      if (!host) fail(404, 'That referral code does not exist');
+      if (host.id === user.id) fail(400, 'You cannot use your own code');
+      if ((host.createdAt || 0) > (user.createdAt || 0)) fail(400, 'Use a code from a player who joined before you');
+      const bonus = referralBonus(host);
+      credit(state, user, bonus, 'referral', { from: host.username });
+      credit(state, host, bonus, 'referral', { from: user.username });
+      user.referredBy = host.referral;
+      return { user: userDto(user, { self: true }), referredBy: user.referredBy, amount: bonus };
+    });
+    res.json(result);
+  })
+);
+
+app.post(
   '/api/rewards/daily',
   route((req, res) => {
     const me = requireUser(req);
@@ -1967,8 +2059,9 @@ app.post(
       }
       const amount = 0.01;
       credit(state, user, amount, 'daily', {});
+      const points = creditPoints(state, user, POINTS.daily, 'daily');
       user.dailyClaimedAt = Date.now();
-      return { user: userDto(user, { self: true }), amount };
+      return { user: userDto(user, { self: true }), amount, points };
     });
     res.json(result);
   })

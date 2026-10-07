@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useApp } from '../App';
 import { ago, format, useNow, withZone } from '../format';
-import { Amount, Avatar, Name, PageHead, Token } from '../ui';
+import { Amount, Avatar, Name, PageHead, Stake, Token } from '../ui';
 
 export function Home({ missing = false }) {
   const { rev, setAuth, me } = useApp();
@@ -34,8 +34,9 @@ export function Home({ missing = false }) {
             <Link className="btn ghost" to="/how-to-play">How a lobby works</Link>
           </div>
           <div className="stats">
-            <div><span>Online now</span><strong><i className="online-dot" aria-hidden="true" />{format(data.stats.online || 0)}</strong></div>            <div><span>Tokens won</span><strong><Token /> {format(data.stats.prizes)}</strong></div>
-            <div><span>Duels</span><strong>{format(data.stats.duels)}</strong></div>
+            <div><span>Online now</span><strong><i className="online-dot" aria-hidden="true" /><CountUp value={data.stats.online || 0} /></strong></div>
+            <div><span>Tokens won</span><strong><Token /> <CountUp value={data.stats.prizes} /></strong></div>
+            <div><span>Duels</span><strong><CountUp value={data.stats.duels} /></strong></div>
           </div>
         </div>
         <div className="hero-cards">
@@ -87,12 +88,12 @@ export function MatchTable({ matches, setAuth }) {
             <div className="stake">
               <div>
                 <span>Entry</span>
-                <Amount value={match.entry} />
+                <Stake value={match.entry} currency={match.currency} />
               </div>
               <b aria-hidden="true">→</b>
               <div className="prize">
                 <span>Prize</span>
-                <Amount value={match.pot} />
+                <Stake value={match.pot} currency={match.currency} />
               </div>
             </div>
             <div className="listing-actions">
@@ -137,6 +138,32 @@ function ListingExpiry({ expiresAt }) {
       <strong>{label}</strong>
     </div>
   );
+}
+
+function CountUp({ value }) {
+  const target = Number(value) || 0;
+  const [shown, setShown] = useState(() => (
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? target : 0
+  ));
+  useEffect(() => {
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      setShown(target);
+      return undefined;
+    }
+    let frame = 0;
+    const start = performance.now();
+    const from = 0;
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / 1100);
+      const eased = 1 - Math.pow(1 - t, 4);
+      setShown(from + (target - from) * eased);
+      if (t < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [target]);
+  const decimals = Number.isInteger(target) ? 0 : 2;
+  return <>{format(Number(shown.toFixed(decimals)))}</>;
 }
 
 function ProfileCard({ me }) {

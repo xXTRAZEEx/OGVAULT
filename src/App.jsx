@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api, onWs, setToken } from './api';
 import { Shell } from './shell';
-import { WebsiteDown } from './ui';
+import { VpnNotice, WebsiteDown } from './ui';
 import { Home } from './pages/Home';
 import { Play } from './pages/Play';
 import { Match } from './pages/Match';
@@ -121,6 +121,7 @@ export default function App() {
 
   return (
     <Ctx.Provider value={{ me, setMe, activeMatchId, ready, toast, auth, setAuth, chatOpen, setChatOpen, rev, refreshMe, news, setNews, signOut, toasts }}>
+      <VpnNotice />
       <Shell>
         <PageEnter>
         <Routes>
@@ -130,6 +131,7 @@ export default function App() {
           <Route path="/tournaments" element={<Navigate to="/play" replace />} />
           <Route path="/tournaments/:id" element={<Navigate to="/play" replace />} />
           <Route path="/leaderboard" element={<Leaderboard />} />
+          <Route path="/weekly" element={<Potw />} />
           <Route path="/potw" element={<Potw />} />
           <Route path="/shop" element={<Shop />} />
           <Route path="/wallet" element={<Wallet />} />

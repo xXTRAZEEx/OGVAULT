@@ -77,6 +77,7 @@ export async function api(path, { method = 'GET', body } = {}) {
   if (!res.ok) {
     const error = new Error(data.error || 'Request failed');
     error.status = res.status;
+    if (data.vpn) window.dispatchEvent(new CustomEvent('ogv:vpn'));
     throw error;
   }
   return data;

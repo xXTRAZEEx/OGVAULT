@@ -64,9 +64,11 @@ export function userDto(user, { self = false, online = false } = {}) {
       ? {
           email: user.email,
           balance: user.balance,
+          points: user.points || 0,
           snipes: user.snipes,
           shields: user.shields,
           referral: user.referral,
+          referredBy: user.referredBy || '',
           excludedUntil: user.excludedUntil || 0,
           withdrawn: user.withdrawn || 0,
           dailyClaimedAt: user.dailyClaimedAt || 0,
@@ -156,8 +158,9 @@ export function matchDto(state, match, viewerId) {
   return {
     id: match.id,
     entry: match.entry,
-    pot: listingPrize(match.entry),
-    fee: MATCH_FEE,
+    currency: match.currency || 'tokens',
+    pot: matchPrize(match),
+    fee: isPointsMatch(match) ? 0 : MATCH_FEE,
     practice: !!match.practice,
     status: match.status,
     phase: listingPhase(match),
@@ -222,7 +225,76 @@ export function matchDto(state, match, viewerId) {
 }
 
 const WEEK_MS = 7 * 86400000;
-export const POTW_PRIZES = [15, 10, 5];
+export const POTW_PRIZES = [8, 4, 2];
+export const POINTS = { daily: 1, played: 0, win: 5 };
+const RANKED_POINT_TYPES = new Set(['daily', 'match', 'win']);
+
+export function creditPoints(state, user, amount, type, meta = {}) {
+  if (!user || user.npc || !(amount > 0)) return 0;
+  const value = Math.round(amount);
+  user.points = Math.round((user.points || 0) + value);
+  if (!Array.isArray(state.pointTxs)) state.pointTxs = [];
+  state.pointTxs.unshift({ id: rid('p'), userId: user.id, amount: value, type, meta, at: Date.now() });
+  if (state.pointTxs.length > 20000) state.pointTxs.length = 20000;
+  return value;
+}
+
+export function isPointsMatch(match) {
+  return match?.currency === 'points';
+}
+
+export function matchPrize(match) {
+  return isPointsMatch(match) ? Math.round(match.entry * 2) : listingPrize(match.entry);
+}
+
+function movePoints(state, user, amount, type, meta) {
+  const value = Math.round(amount);
+  user.points = Math.round((user.points || 0) + value);
+  if (!Array.isArray(state.pointTxs)) state.pointTxs = [];
+  state.pointTxs.unshift({ id: rid('p'), userId: user.id, amount: value, type, meta, at: Date.now() });
+  if (state.pointTxs.length > 20000) state.pointTxs.length = 20000;
+}
+
+export function chargeEntry(state, user, match, amount = match.entry) {
+  if (!user || match.practice || !(amount > 0)) return;
+  if (isPointsMatch(match)) {
+    if ((user.points || 0) < amount) fail(400, 'Not enough Vault Points');
+    movePoints(state, user, -amount, 'entry', { match: match.id });
+    return;
+  }
+  debit(state, user, amount, 'entry', { match: match.id });
+}
+
+export function refundEntry(state, user, match) {
+  if (!user || match.practice || !(match.entry > 0)) return;
+  if (isPointsMatch(match)) {
+    if (!user.npc) movePoints(state, user, match.entry, 'refund', { match: match.id });
+    return;
+  }
+  if (user.npc) user.balance = round(user.balance + match.entry);
+  else credit(state, user, match.entry, 'refund', { match: match.id });
+}
+
+function payWinner(state, winner, match) {
+  const payout = matchPrize(match);
+  match.payout = payout;
+  if (!winner) return;
+  if (isPointsMatch(match)) {
+    if (!winner.npc) movePoints(state, winner, payout, 'prize', { match: match.id });
+    return;
+  }
+  credit(state, winner, payout, 'win', { match: match.id });
+  state.prizes = round(state.prizes + payout);
+}
+
+function awardMatchPoints(state, match, players) {
+  if (match.practice || isPointsMatch(match)) return;
+  if (players.some((user) => !user || user.npc)) return;
+  for (const user of players) {
+    if (POINTS.played) creditPoints(state, user, POINTS.played, 'match', { matchId: match.id });
+    if (user.id === match.winnerId) creditPoints(state, user, POINTS.win, 'win', { matchId: match.id });
+  }
+}
 
 export function potwWindow(potw, now = Date.now()) {
   const endsAt = potw && typeof potw.endsAt === 'number' ? potw.endsAt : now + WEEK_MS;
@@ -232,21 +304,18 @@ export function potwWindow(potw, now = Date.now()) {
 
 export function potwLeaders(state, start, end) {
   const totals = new Map();
-  for (const row of state.history || []) {
-    if (!row || row.practice || !row.winnerId) continue;
+  for (const row of state.pointTxs || []) {
     const at = row.at || 0;
-    if (at < start || at >= end) continue;
-    const won = round(row.payout || 0);
-    if (won <= 0) continue;
-    const current = totals.get(row.winnerId) || { won: 0, wins: 0, latest: 0 };
-    current.won = round(current.won + won);
-    current.wins += 1;
+    if (at < start || at >= end || !(row.amount > 0) || !RANKED_POINT_TYPES.has(row.type)) continue;
+    const current = totals.get(row.userId) || { points: 0, wins: 0, latest: 0 };
+    current.points += row.amount;
+    if (row.type === 'win') current.wins += 1;
     current.latest = Math.max(current.latest, at);
-    totals.set(row.winnerId, current);
+    totals.set(row.userId, current);
   }
   return [...totals.entries()]
-    .map(([userId, row]) => ({ userId, won: row.won, wins: row.wins, latest: row.latest }))
-    .sort((a, b) => b.won - a.won || b.wins - a.wins || a.latest - b.latest);
+    .map(([userId, row]) => ({ userId, points: row.points, wins: row.wins, latest: row.latest }))
+    .sort((a, b) => b.points - a.points || b.wins - a.wins || a.latest - b.latest);
 }
 
 export function ensurePotw(state, timeZone) {
@@ -351,7 +420,7 @@ function applyResult(user, match, score) {
     user.stats.streak += 1;
     user.stats.bestStreak = Math.max(user.stats.bestStreak || 0, user.stats.streak);
     const profit = round((match.payout || 0) - match.entry);
-    if (profit > 0) user.stats.earned = round(user.stats.earned + profit);
+    if (profit > 0 && !isPointsMatch(match)) user.stats.earned = round(user.stats.earned + profit);
   } else {
     user.stats.losses += 1;
     if (user.shields > 0) user.shields -= 1;
@@ -360,7 +429,7 @@ function applyResult(user, match, score) {
 }
 
 function addCupPoints(state, userId, match, score) {
-  if (match.practice) return;
+  if (match.practice || isPointsMatch(match)) return;
   for (const cup of state.tournaments) {
     if (cup.paidOut || Date.now() > cup.endsAt) continue;
     const row = cup.board.find((item) => item.userId === userId);
@@ -396,17 +465,10 @@ export function resolveMatch(state, match, { forfeitId = null } = {}) {
   match.payout = 0;
   if (!match.practice && match.entry > 0) {
     if (!match.winnerId) {
-      if (host) credit(state, host, match.entry, 'refund', { match: match.id });
-      if (guest && !guest.npc) credit(state, guest, match.entry, 'refund', { match: match.id });
-      if (guest && guest.npc) guest.balance = round(guest.balance + match.entry);
+      refundEntry(state, host, match);
+      refundEntry(state, guest, match);
     } else {
-      const payout = listingPrize(match.entry);
-      match.payout = payout;
-      const winner = match.winnerId === host.id ? host : guest;
-      if (winner) {
-        credit(state, winner, payout, 'win', { match: match.id });
-        state.prizes = round(state.prizes + payout);
-      }
+      payWinner(state, match.winnerId === host.id ? host : guest, match);
     }
   }
   for (const user of [host, guest]) {
@@ -421,6 +483,7 @@ export function resolveMatch(state, match, { forfeitId = null } = {}) {
     entry: match.entry,
     pot: round(match.entry * 2),
     payout: match.payout,
+    currency: match.currency || 'tokens',
     winnerId: match.winnerId,
     practice: !!match.practice,
     forfeit: !!forfeitId,
@@ -431,6 +494,7 @@ export function resolveMatch(state, match, { forfeitId = null } = {}) {
     })),
   });
   if (state.history.length > 200) state.history.length = 200;
+  awardMatchPoints(state, match, [host, guest]);
 }
 
 export function freshMatch({
@@ -443,6 +507,7 @@ export function freshMatch({
   region = 'EU',
   platform = 'PC',
   firstTo = 1,
+  currency = 'tokens',
 }) {
   const createdAt = Date.now();
   return {
@@ -450,6 +515,7 @@ export function freshMatch({
     hostId: host.id,
     guestId: null,
     entry,
+    currency: currency === 'points' ? 'points' : 'tokens',
     practice,
     status: 'open',
     invitee,
@@ -492,11 +558,7 @@ export function settleAgreed(state, match, winnerId, { forfeitId = null } = {}) 
   match.status = 'done';
   match.payout = 0;
   if (!match.practice && match.entry > 0) {
-    const payout = listingPrize(match.entry);
-    match.payout = payout;
-    const winner = winnerId === host.id ? host : guest;
-    credit(state, winner, payout, 'win', { match: match.id });
-    state.prizes = round(state.prizes + payout);
+    payWinner(state, winnerId === host.id ? host : guest, match);
   }
   for (const user of [host, guest]) {
     applyResult(user, match, match.scores[user.id] || 0);
@@ -508,6 +570,7 @@ export function settleAgreed(state, match, winnerId, { forfeitId = null } = {}) 
     entry: match.entry,
     pot: round(match.entry * 2),
     payout: match.payout,
+    currency: match.currency || 'tokens',
     winnerId: match.winnerId,
     practice: !!match.practice,
     forfeit: !!forfeitId,
@@ -520,6 +583,7 @@ export function settleAgreed(state, match, winnerId, { forfeitId = null } = {}) 
     })),
   });
   if (state.history.length > 200) state.history.length = 200;
+  awardMatchPoints(state, match, [host, guest]);
 }
 
 export function attachBot(match, npcUser) {
@@ -831,6 +895,20 @@ export function unequipCosmetic(user, slot) {
 
 export function blocked(user) {
   return user && user.excludedUntil > Date.now();
+}
+
+export function usedReferral(state, user, { save = true } = {}) {
+  if (!user) return '';
+  if (user.referredBy) return user.referredBy;
+  for (const tx of state.txs || []) {
+    if (tx.userId !== user.id || tx.type !== 'referral') continue;
+    const host = state.users.find((item) => item.username === tx.meta?.from);
+    if (host && (host.createdAt || 0) < (user.createdAt || 0)) {
+      if (save) user.referredBy = host.referral;
+      return host.referral;
+    }
+  }
+  return '';
 }
 
 export function referralBonus() {

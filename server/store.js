@@ -131,6 +131,10 @@ function stripBots(state) {
         if (!userId || npcIds.has(userId) || match.practice || !(match.entry > 0)) continue;
         const person = state.users.find((user) => user.id === userId);
         if (!person) continue;
+        if (match.currency === 'points') {
+          person.points = Math.round((person.points || 0) + match.entry);
+          continue;
+        }
         person.balance = round(person.balance + match.entry);
         state.txs.unshift({
           id: rid('t'),

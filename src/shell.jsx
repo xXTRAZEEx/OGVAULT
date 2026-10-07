@@ -3,13 +3,13 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { api, apiUrl, onWs, sendWs, setToken } from './api';
 import { useApp } from './App';
 import { ago } from './format';
-import { Amount, Avatar, Modal, Name, Token, VaultLogo } from './ui';
+import { Amount, Avatar, Modal, Name, PointIcon, Token, VaultLogo } from './ui';
 
 const NAV = [
   ['Home', '/', HomeIcon],
   ['Kill Race', '/play', PlayIcon],
   ['Leaderboard', '/leaderboard', BoardIcon],
-  ['Player of the Week', '/potw', StarIcon],
+  ['Weekly Vault', '/weekly', StarIcon],
   ['Shop', '/shop', ShopIcon],
   ['Wallet', '/wallet', WalletIcon],
   ['Rewards', '/rewards', GiftIcon],
@@ -133,6 +133,12 @@ export function Shell({ children }) {
             )}
           </div>
           <div className="top-spacer" />
+          {me && (
+            <NavLink to="/weekly" className="balance points-balance" title="Vault Points">
+              <PointIcon />
+              <strong>{Number(me.points || 0).toLocaleString()}</strong>
+            </NavLink>
+          )}
           {me && (
             <NavLink to="/wallet" className="balance">
               <Token />
