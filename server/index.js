@@ -1934,7 +1934,7 @@ app.post(
     assertPlay(me);
     const result = update((state) => {
       const user = state.users.find((item) => item.id === me.id);
-      return dealBlackjack(state, user, req.body.bet);
+      return dealBlackjack(state, user, req.body.bet, req.body.currency);
     });
     res.json(result);
   })

@@ -1433,3 +1433,9 @@ label .have { float: right; font-weight: 500; font-size: 12px; display: inline-f
 .vpn-modal h2 { margin: 0; font-size: 22px; }
 .vpn-modal p { margin: 0 0 8px; color: var(--muted); line-height: 1.55; }
 .vpn-icon { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; color: #ff6b6b; background: rgba(255, 107, 107, 0.1); border: 1px solid rgba(255, 107, 107, 0.35); }
+
+.bj-currency { display: inline-flex; padding: 3px; gap: 2px; border-radius: 10px; border: 1px solid var(--line); background: #0c0e13; align-self: flex-end; }
+.bj-currency button { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; transition: background-color 160ms ease, color 160ms ease; }
+.bj-currency button:hover { color: var(--text); }
+.bj-currency button.on { background: rgba(245, 196, 81, 0.12); color: var(--text); }
+.bj-currency button.points.on { background: rgba(201, 209, 220, 0.12); }

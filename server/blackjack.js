@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { credit, debit, userDto } from './logic.js';
+import { credit, debit, movePoints, userDto } from './logic.js';
 import { fail, rid, round } from './store.js';
 
 const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
@@ -62,6 +62,24 @@ export function parseBet(raw, balance) {
   if (value < 1) fail(400, 'Minimum bet is 1 token');
   if (balance + 1e-9 < value) fail(400, 'Not enough tokens');
   return value;
+}
+
+export function parsePointsBet(raw, points) {
+  const text = String(raw ?? '').trim();
+  if (!/^\d+$/.test(text)) fail(400, 'Vault Points bets are whole numbers');
+  const value = Number(text);
+  if (value < 1) fail(400, 'Minimum bet is 1 Vault Point');
+  if ((points || 0) < value) fail(400, 'Not enough Vault Points');
+  return value;
+}
+
+function usesPoints(hand) {
+  return hand?.currency === 'points';
+}
+
+function spend(state, user, hand, amount, meta) {
+  if (usesPoints(hand)) movePoints(state, user, -amount, 'blackjack', meta);
+  else debit(state, user, amount, 'blackjack', meta);
 }
 
 export const BLACKJACK_BIAS_DEFAULT = 8;
@@ -288,8 +306,12 @@ function settle(state, user, hand, outcome) {
   if (outcome === 'push') creditAmount = stake;
   else if (outcome === 'win') creditAmount = round(stake * 2);
   else if (outcome === 'blackjack') creditAmount = round(stake * 2.5);
+  if (usesPoints(hand)) creditAmount = Math.floor(creditAmount);
   hand.payout = creditAmount;
-  if (creditAmount > 0) credit(state, user, creditAmount, 'blackjack', { hand: hand.id, outcome });
+  if (creditAmount > 0) {
+    if (usesPoints(hand)) movePoints(state, user, creditAmount, 'blackjack', { hand: hand.id, outcome });
+    else credit(state, user, creditAmount, 'blackjack', { hand: hand.id, outcome });
+  }
   user.blackjack = null;
   user.blackjackLast = publicHand(hand, true);
 }
@@ -331,6 +353,7 @@ export function publicHand(hand, reveal) {
   return {
     id: hand.id,
     bet: hand.bet,
+    currency: usesPoints(hand) ? 'points' : 'tokens',
     status: hand.status,
     outcome: hand.outcome || null,
     payout: hand.payout || 0,
@@ -350,16 +373,18 @@ export function blackjackView(user) {
     hand: user.blackjack ? publicHand(user.blackjack, false) : null,
     last: user.blackjackLast || null,
     balance: round(user.balance),
+    points: Math.round(user.points || 0),
     user: userDto(user, { self: true, online: true }),
   };
 }
 
-export function dealBlackjack(state, user, rawBet) {
+export function dealBlackjack(state, user, rawBet, rawCurrency) {
   if (user.blackjack && user.blackjack.status === 'play') fail(400, 'Finish the hand in progress');
-  const bet = parseBet(rawBet, user.balance);
-  debit(state, user, bet, 'blackjack', {});
+  const currency = rawCurrency === 'points' ? 'points' : 'tokens';
+  const bet = currency === 'points' ? parsePointsBet(rawBet, user.points) : parseBet(rawBet, user.balance);
   const hand = {
     id: rid('bj'),
+    currency,
     bet,
     shoe: freshShoe(),
     player: [],
@@ -370,6 +395,7 @@ export function dealBlackjack(state, user, rawBet) {
     payout: 0,
     settled: false,
   };
+  spend(state, user, hand, bet, { hand: hand.id });
   hand.player.push(draw(hand), draw(hand));
   hand.dealer.push(draw(hand));
   user.blackjack = hand;
@@ -414,8 +440,10 @@ export function doubleBlackjack(state, user) {
   if (!hand || hand.status !== 'play') fail(400, 'No hand in progress');
   if (hand.player.length !== 2 || hand.doubled) fail(400, 'Double is only on the first two cards');
   const extra = hand.bet;
-  if (user.balance + 1e-9 < extra) fail(400, 'Not enough tokens to double');
-  debit(state, user, extra, 'blackjack', { hand: hand.id, double: true });
+  if (usesPoints(hand) ? (user.points || 0) < extra : user.balance + 1e-9 < extra) {
+    fail(400, usesPoints(hand) ? 'Not enough Vault Points to double' : 'Not enough tokens to double');
+  }
+  spend(state, user, hand, extra, { hand: hand.id, double: true });
   hand.bet = round(hand.bet + extra);
   hand.doubled = true;
   hand.player.push(draw(hand));

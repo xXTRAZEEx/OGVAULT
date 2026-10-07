@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { useApp } from '../App';
-import { PageHead, Token } from '../ui';
+import { PageHead, PointIcon, Token } from '../ui';
 
 const SUIT = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const DEAL_MS = 340;
@@ -175,6 +175,7 @@ function continueSteps(prev, next) {
 export function Blackjack() {
   const { me, setMe, setAuth, toast } = useApp();
   const [bet, setBet] = useState('1');
+  const [currency, setCurrency] = useState('tokens');
   const [hand, setHand] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -281,7 +282,7 @@ export function Blackjack() {
       <PageHead
         kicker="House game"
         title="Blackjack"
-        text="Bet vault tokens against the dealer. The shoe, hits, and payout stay on the server. Blackjack pays 3:2. Dealer stands on 17."
+        text="Bet vault tokens or Vault Points against the dealer. The shoe, hits, and payout stay on the server. Blackjack pays 3:2. Dealer stands on 17."
       />
       {!me && (
         <div className="panel bj-signin">
@@ -293,7 +294,10 @@ export function Blackjack() {
           <div className="bj-table panel">
             <div className="bj-meta">
               <span>Balance <Token /> <strong>{Number(me.balance).toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong></span>
-              {shown && <span>Bet <Token /> <strong>{Number(shown.bet).toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong></span>}
+              <span>Points <PointIcon size={14} /> <strong>{Math.round(me.points || 0).toLocaleString()}</strong></span>
+              {shown && (
+                <span>Bet {shown.currency === 'points' ? <PointIcon size={14} /> : <Token />} <strong>{Number(shown.bet).toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong></span>
+              )}
             </div>
             <HandRow label="Dealer" side="dealer" cards={shown?.dealer} total={shown?.status === 'done' ? shown.dealerTotal : shown?.dealerShows} hidden={!shown || shown.status === 'play'} motion={shown?.motion} />
             <HandRow label="You" side="player" cards={shown?.player} total={shown?.playerTotal} motion={shown?.motion} />
@@ -304,19 +308,36 @@ export function Blackjack() {
       )}
       <div className="bj-actions">
         {!playing && (
+          <div className="bj-currency" role="radiogroup" aria-label="Bet with">
+            <button type="button" role="radio" aria-checked={currency === 'tokens'} className={currency === 'tokens' ? 'on' : ''} disabled={busy} onClick={() => setCurrency('tokens')}>
+              <Token /> Tokens
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={currency === 'points'}
+              className={`points ${currency === 'points' ? 'on' : ''}`}
+              disabled={busy}
+              onClick={() => { setCurrency('points'); setBet((value) => String(Math.max(1, Math.floor(Number(value) || 1)))); }}
+            >
+              <PointIcon size={14} /> Points
+            </button>
+          </div>
+        )}
+        {!playing && (
           <label className="bj-bet">
             Bet
             <input
               value={bet}
               onChange={(event) => setBet(event.target.value)}
-              inputMode="decimal"
+              inputMode={currency === 'points' ? 'numeric' : 'decimal'}
               aria-label="Bet amount"
               disabled={busy}
             />
           </label>
         )}
         {!playing && (
-          <button className="btn" type="button" disabled={busy} onClick={() => { resumeDealAudio(); act('/api/blackjack/deal', { bet }); }}>Deal</button>
+          <button className="btn" type="button" disabled={busy} onClick={() => { resumeDealAudio(); act('/api/blackjack/deal', { bet, currency }); }}>Deal</button>
         )}
         <button className="btn" type="button" disabled={busy || !playing || !hand?.canHit} onClick={() => act('/api/blackjack/hit')}>Hit</button>
         <button className="btn ghost" type="button" disabled={busy || !playing || !hand?.canStand} onClick={() => act('/api/blackjack/stand')}>Stand</button>

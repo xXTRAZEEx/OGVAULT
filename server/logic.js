@@ -247,7 +247,7 @@ export function matchPrize(match) {
   return isPointsMatch(match) ? Math.round(match.entry * 2) : listingPrize(match.entry);
 }
 
-function movePoints(state, user, amount, type, meta) {
+export function movePoints(state, user, amount, type, meta) {
   const value = Math.round(amount);
   user.points = Math.round((user.points || 0) + value);
   if (!Array.isArray(state.pointTxs)) state.pointTxs = [];
