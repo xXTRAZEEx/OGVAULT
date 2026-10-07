@@ -205,10 +205,10 @@ export function Blackjack() {
     const sequence = shownRef.current?.id === next.id ? continueSteps(shownRef.current, next) : dealSteps(next);
     sequence.forEach((step, index) => {
       if (step.motion?.kind !== 'deal' && step.motion?.kind !== 'flip') return;
-      const id = setTimeout(() => playCardSound(), reduced ? index * 70 : DEAL_MS * index);
+      const id = setTimeout(() => playCardSound(), DEAL_MS * index);
       timers.current.push(id);
     });
-    if (!animate || reduced) {
+    if (!animate) {
       const done = frame(next, next.player || [], next.dealer || [], next.status === 'done', null);
       shownRef.current = done;
       setHand(done);
