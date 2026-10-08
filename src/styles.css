@@ -1480,3 +1480,17 @@ label .have { float: right; font-weight: 500; font-size: 12px; display: inline-f
 .cashout-lock { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; border-color: rgba(255, 196, 0, 0.45); }
 .cashout-lock .btn { margin-left: auto; }
 
+
+.launch-gate { background: radial-gradient(ellipse at 50% 30%, rgba(245, 197, 66, 0.12), transparent 60%), #07090d; }
+.launch-gate h1 { max-width: 640px; font-size: clamp(24px, 4vw, 36px); line-height: 1.15; }
+.launch-kicker { font-size: 12px; font-weight: 700; letter-spacing: 0.24em; text-transform: uppercase; color: #f5c542; }
+.launch-count { margin: 4px 0 0; font-variant-numeric: tabular-nums; line-height: 1; }
+.launch-count strong { font-size: clamp(56px, 10vw, 88px); color: #fff; }
+.launch-count span { font-size: clamp(28px, 5vw, 44px); color: rgba(255, 255, 255, 0.45); }
+.launch-bar { width: min(520px, 86vw); height: 12px; border-radius: 99px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.launch-bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #f5c542, #ffdf7e); box-shadow: 0 0 18px rgba(245, 197, 66, 0.6); transition: width 0.8s var(--ease-out, ease); }
+.launch-note { margin: 0; color: rgba(255, 255, 255, 0.7); }
+.launch-join { margin-top: 6px; }
+.launch-live { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.45); }
+.launch-live .dot { width: 8px; height: 8px; border-radius: 50%; background: #2ecc71; box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.6); animation: launch-pulse 1.6s infinite; }
+@keyframes launch-pulse { 70% { box-shadow: 0 0 0 8px rgba(46, 204, 113, 0); } 100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); } }

@@ -183,6 +183,16 @@ const commands = [
     .setName('earn')
     .setDescription('How to earn free tokens with your Discord status'),
   adminOnly(new SlashCommandBuilder()
+    .setName('live')
+    .setDescription('Lock the site behind a launch page until the Discord reaches a member goal')
+    .addStringOption((option) =>
+      option.setName('status').setDescription('Turn the launch page on or off').setRequired(true)
+        .addChoices({ name: 'On: lock the site until the goal', value: 'on' }, { name: 'Off: open the site now', value: 'off' })
+    )
+    .addIntegerOption((option) =>
+      option.setName('goal').setDescription('Member goal, for example 500').setMinValue(1).setMaxValue(1000000)
+    )),
+  adminOnly(new SlashCommandBuilder()
     .setName('match')
     .setDescription('Owner match tools')
     .addSubcommand((sub) =>
@@ -749,6 +759,71 @@ function setWebsite(status, reason, length, unit) {
     state.websiteBackAt = until;
     return { online: false, reason: why, until };
   });
+}
+
+function setLaunchGate(status, goal) {
+  return update((state) => {
+    const gate = state.launchGate || {};
+    if (status === 'off') {
+      state.launchGate = { ...gate, enabled: false };
+      return state.launchGate;
+    }
+    const target = Number(goal ?? gate.goal);
+    if (!Number.isInteger(target) || target < 1) fail(400, 'Set a member goal, for example 500');
+    state.launchGate = { ...gate, enabled: true, goal: target };
+    return state.launchGate;
+  });
+}
+
+async function countHumans(guild) {
+  const fresh = await guild.fetch();
+  const roles = await guild.roles.fetch();
+  const bots = new Set(roles.filter((role) => role.tags?.botId).map((role) => role.tags.botId)).size;
+  const total = fresh.approximateMemberCount ?? fresh.memberCount ?? 0;
+  return Math.max(0, total - bots);
+}
+
+async function launchInvite(guild) {
+  const saved = load().launchGate?.invite;
+  if (saved) return saved;
+  const channels = await guild.channels.fetch();
+  const channel =
+    guild.systemChannel ||
+    channels.find((item) => item?.type === ChannelType.GuildText && /welcome/i.test(item.name)) ||
+    channels.find((item) => item?.type === ChannelType.GuildText);
+  if (!channel) return '';
+  const invite = await guild.invites.create(channel.id, { maxAge: 0, maxUses: 0, unique: false, reason: 'OGVAULT launch page' });
+  return invite.url;
+}
+
+async function tickLaunch() {
+  const guildId = String(process.env.DISCORD_GUILD_ID || '').trim();
+  if (!bot?.isReady() || !guildId) return;
+  const guild = await bot.guilds.fetch(guildId);
+  const members = await countHumans(guild);
+  const invite = await launchInvite(guild).catch(() => '');
+  const gate = load().launchGate || {};
+  const reached = gate.enabled && gate.goal > 0 && members >= gate.goal;
+  if (gate.members === members && (gate.invite || '') === (invite || gate.invite || '') && !reached) return;
+  update((state) => {
+    state.launchGate = { ...(state.launchGate || {}), members, membersAt: Date.now(), invite: invite || state.launchGate?.invite || '' };
+    if (reached) {
+      state.launchGate.enabled = false;
+      state.launchGate.liveAt = Date.now();
+    }
+  });
+  if (reached) {
+    const channels = await guild.channels.fetch();
+    const news = channels.find((item) => item?.type === ChannelType.GuildText && /announcements/i.test(item.name));
+    await news?.send({
+      content: '@everyone',
+      allowedMentions: { parse: ['everyone'] },
+      embeds: [new EmbedBuilder()
+        .setTitle('🎉  OGVAULT is LIVE!')
+        .setColor(0xf5c542)
+        .setDescription(`We hit **${members}/${gate.goal}** members. Thank you! The site is open now: https://ogvault.co.uk`)],
+    }).catch(() => {});
+  }
 }
 
 let bot = null;
@@ -1706,6 +1781,18 @@ async function handleCommand(interaction) {
       });
       return;
     }
+    if (interaction.commandName === 'live') {
+      const gate = setLaunchGate(interaction.options.getString('status'), interaction.options.getInteger('goal'));
+      await tickLaunch().catch(() => {});
+      const now = load().launchGate || gate;
+      await interaction.reply({
+        content: now.enabled
+          ? `The site is locked behind the launch page. Members: **${now.members ?? '…'}/${now.goal}**. It opens by itself when the goal is reached.`
+          : 'The launch page is off. The site is open.',
+        ephemeral: true,
+      });
+      return;
+    }
     if (interaction.commandName === 'match' && interaction.options.getSubcommand() === 'history') {
       await interaction.reply({ ...matchHistoryPayload(interaction.options.getString('user')), ephemeral: true });
       return;
@@ -1841,6 +1928,7 @@ const COMMAND_GUIDE = [
   ['/balance', 'Anyone can see their own tokens and Vault Points. Owners can add a username to look up a player.'],
   ['/report', 'Anyone can report a member with a reason. Helpers get pinged in #filters and can Warn or Dismiss. 3 warnings in a week means a 1 hour timeout.'],
   ['/earn', 'Anyone can see how to earn 0.02 tokens a day by putting ogvault.co.uk in their Discord status, and their progress today.'],
+  ['/live', 'Lock the whole site behind a launch page showing live Discord members against your goal (bots not counted). It opens by itself when the goal is hit.'],
   ['/match history', 'Every match a player has played: date, opponent, entry, project and region, who won, payout, forfeits, and who awarded disputes.'],
   ['/check rate', 'Live count of members showing ogvault.co.uk in their Discord status, and whether yours is detected.'],
   ['/blackjack bias', 'Show or set how often a player win is settled for the dealer. 0 is fair, 100 is the maximum edge.'],
@@ -2316,6 +2404,8 @@ export function startDiscordAdmin(withPresence = true) {
       const filters = await ensureFilters(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up filters'));
       filtersChannelId = filters?.id || '';
       await ensureAutoMod(await client.guilds.fetch(guildId), filters).then(() => console.log('AutoMod rules applied')).catch((error) => console.error('Could not set up AutoMod', error?.message || ''));
+      tickLaunch().catch(() => console.error('Launch member count failed'));
+      setInterval(() => { tickLaunch().catch(() => {}); }, 30 * 1000);
       announceWeeklyResults().catch(() => console.error('Weekly Vault announcement failed'));
       setInterval(() => { announceWeeklyResults().catch(() => console.error('Weekly Vault announcement failed')); }, 5 * 60 * 1000);
       await ensureVoiceChannels(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up voice channels'));

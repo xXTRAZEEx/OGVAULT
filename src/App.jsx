@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api, onWs, setToken } from './api';
 import { Shell } from './shell';
-import { VpnNotice, WebsiteDown, WelcomeNotice } from './ui';
+import { LaunchGate, VpnNotice, WebsiteDown, WelcomeNotice } from './ui';
 import { Home } from './pages/Home';
 import { Play } from './pages/Play';
 import { Match } from './pages/Match';
@@ -118,6 +118,7 @@ export default function App() {
     toast('Signed out');
   };
 
+  if (website?.offline && website.launch) return <LaunchGate {...website.launch} />;
   if (website?.offline) return <WebsiteDown reason={website.reason} until={website.until} />;
 
   return (

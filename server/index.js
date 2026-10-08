@@ -529,6 +529,15 @@ function websiteStatus(state) {
   const backAt = Number(state.websiteBackAt) || 0;
   const offline = !!state.websiteOffline && (!backAt || backAt > Date.now());
   const reason = state.websiteReason === 'repair' ? 'Down for repair' : 'Down for maintenance';
+  const gate = state.launchGate || {};
+  if (!offline && gate.enabled && gate.goal > 0) {
+    return {
+      offline: true,
+      reason: 'Launching soon',
+      until: 0,
+      launch: { goal: gate.goal, members: Number(gate.members) || 0, invite: gate.invite || '' },
+    };
+  }
   return { offline, reason: offline ? reason : '', until: offline ? backAt : 0 };
 }
 

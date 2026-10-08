@@ -318,6 +318,25 @@ export function PageHead({ kicker, title, text, children }) {
   );
 }
 
+export function LaunchGate({ goal, members, invite }) {
+  const pct = goal > 0 ? Math.min(100, (members / goal) * 100) : 0;
+  const left = Math.max(0, goal - members);
+  return (
+    <section className="website-down launch-gate">
+      <img src="/logo.png" alt="OGVAULT" />
+      <span className="launch-kicker">Coming soon</span>
+      <h1>OGVAULT goes live at {goal.toLocaleString()} Discord members</h1>
+      <p className="launch-count"><strong>{members.toLocaleString()}</strong><span>/{goal.toLocaleString()}</span></p>
+      <div className="launch-bar" role="progressbar" aria-valuemin={0} aria-valuemax={goal} aria-valuenow={members}>
+        <i style={{ width: `${pct}%` }} />
+      </div>
+      <p className="launch-note">{left > 0 ? `${left.toLocaleString()} more to go. Bring your friends.` : 'Goal reached. Opening now.'}</p>
+      {invite ? <a className="btn launch-join" href={invite} target="_blank" rel="noreferrer">Join the Discord</a> : null}
+      <p className="launch-live"><span className="dot" /> Live count, bots not included</p>
+    </section>
+  );
+}
+
 export function WebsiteDown({ reason, until }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
