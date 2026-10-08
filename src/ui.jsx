@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 export function Select({ value, onChange, options, label }) {
   const [open, setOpen] = useState(false);
@@ -216,6 +216,46 @@ export function Name({ user, link = false, label }) {
   );
   if (!link) return body;
   return <Link to={`/u/${user.username}`}>{body}</Link>;
+}
+
+export function WelcomeNotice() {
+  const [name, setName] = useState(null);
+  const navigate = useNavigate();
+  useEffect(() => {
+    const show = (event) => setName(event.detail?.name || 'player');
+    window.addEventListener('ogv:welcome', show);
+    return () => window.removeEventListener('ogv:welcome', show);
+  }, []);
+  if (name == null) return null;
+  const close = () => setName(null);
+  const go = (to) => { close(); navigate(to); };
+  return (
+    <div className="modal-back welcome-back" onMouseDown={close}>
+      <div className="modal welcome-modal" role="dialog" aria-labelledby="welcome-title" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="welcome-glow" aria-hidden="true" />
+        <span className="welcome-kicker">Account created</span>
+        <h2 id="welcome-title">Welcome to the vault, {name}</h2>
+        <p className="welcome-lead">Thanks for joining OGVAULT. Here is a starter gift to get you going.</p>
+        <div className="welcome-gift">
+          <PointIcon size={40} />
+          <div>
+            <strong>+5 Vault Points</strong>
+            <small>Added to your account</small>
+          </div>
+        </div>
+        <ul className="welcome-list">
+          <li><b>Play for free.</b> Use your points to enter a Vault Points Kill Race or a hand of blackjack.</li>
+          <li><b>Earn more.</b> Claim 1 point every day and win 5 for every token Kill Race win.</li>
+          <li><b>Win tokens.</b> The top 3 in the Weekly Vault win 8, 4 and 2 tokens every week.</li>
+        </ul>
+        <div className="welcome-actions">
+          <button className="btn" type="button" onClick={() => go('/play')}>Find a match</button>
+          <button className="btn ghost" type="button" onClick={() => go('/rewards')}>Claim daily reward</button>
+        </div>
+        <button className="welcome-skip" type="button" onClick={close}>Maybe later</button>
+      </div>
+    </div>
+  );
 }
 
 export function VpnNotice() {

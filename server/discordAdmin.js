@@ -10,6 +10,10 @@ import {
   TextInputStyle,
   GatewayIntentBits,
   ActivityType,
+  AutoModerationActionType,
+  AutoModerationRuleEventType,
+  AutoModerationRuleKeywordPresetType,
+  AutoModerationRuleTriggerType,
   PermissionFlagsBits,
   REST,
   Routes,
@@ -23,6 +27,7 @@ import {
   INVENTORY_GRANTS,
   credit,
   debit,
+  ensurePotw,
   grantInventoryItem,
   grantsAvailable,
   inventoryItems,
@@ -170,8 +175,24 @@ const commands = [
       option.setName('username').setDescription('Owner only: look up another player').setRequired(false).setMaxLength(64)
     ),
   new SlashCommandBuilder()
+    .setName('report')
+    .setDescription('Report a member to the Helpers')
+    .addUserOption((option) => option.setName('user').setDescription('Member to report (pick them or paste their ID)').setRequired(true))
+    .addStringOption((option) => option.setName('reason').setDescription('What happened').setRequired(true).setMaxLength(500)),
+  new SlashCommandBuilder()
     .setName('earn')
     .setDescription('How to earn free tokens with your Discord status'),
+  adminOnly(new SlashCommandBuilder()
+    .setName('match')
+    .setDescription('Owner match tools')
+    .addSubcommand((sub) =>
+      sub
+        .setName('history')
+        .setDescription('Every match a player has played, with entry, opponent and winner')
+        .addStringOption((option) =>
+          option.setName('user').setDescription('Site username or Discord username').setRequired(true).setMaxLength(64)
+        )
+    )),
   adminOnly(new SlashCommandBuilder()
     .setName('check')
     .setDescription('Owner checks')
@@ -271,6 +292,94 @@ function hashPw(password) {
 function registeredAccount(user) {
   if (!user) fail(404, 'No player by that name');
   return user;
+}
+
+function matchHistoryPayload(query) {
+  const state = load();
+  const user = registeredAccount(findAccount(state, query));
+  const nameOf = (id) => state.users.find((item) => item.id === id)?.username || (id ? 'deleted player' : '—');
+  const rows = [];
+  const seen = new Set();
+  for (const match of state.matches || []) {
+    if (match.practice || !match.guestId || (match.hostId !== user.id && match.guestId !== user.id)) continue;
+    seen.add(match.id);
+    rows.push({
+      id: match.id,
+      at: match.startAt || match.createdAt || 0,
+      entry: match.entry,
+      currency: match.currency || 'tokens',
+      opponent: nameOf(match.hostId === user.id ? match.guestId : match.hostId),
+      side: match.hostId === user.id ? 'host' : 'guest',
+      status: match.status,
+      winnerId: match.winnerId,
+      payout: match.payout,
+      project: match.project,
+      region: match.region,
+      forfeit: !!match.forfeitId,
+      awardedBy: match.awardedBy?.name || '',
+    });
+  }
+  for (const row of state.history || []) {
+    if (seen.has(row.id) || row.practice) continue;
+    const me = (row.players || []).find((item) => item.id === user.id);
+    if (!me) continue;
+    const other = (row.players || []).find((item) => item.id !== user.id);
+    rows.push({
+      id: row.id,
+      at: row.at,
+      entry: row.entry,
+      currency: row.currency || 'tokens',
+      opponent: other?.username || '—',
+      side: '',
+      status: 'done',
+      winnerId: row.winnerId,
+      payout: row.payout,
+      project: row.project,
+      region: '',
+      forfeit: !!row.forfeit,
+      awardedBy: '',
+    });
+  }
+  rows.sort((a, b) => b.at - a.at);
+  const unit = (row) => (row.currency === 'points' ? 'pts' : 'tokens');
+  let wins = 0;
+  let losses = 0;
+  let wagered = 0;
+  for (const row of rows) {
+    if (row.status !== 'done') continue;
+    if (row.currency !== 'points') wagered += Number(row.entry) || 0;
+    if (row.winnerId === user.id) wins += 1;
+    else if (row.winnerId) losses += 1;
+  }
+  const lines = [];
+  for (const row of rows.slice(0, 25)) {
+    let result;
+    if (row.status !== 'done') result = `⏳ ${row.status}`;
+    else if (!row.winnerId) result = '➖ Draw';
+    else if (row.winnerId === user.id) result = `✅ **Won** +${row.payout || 0} ${unit(row)}`;
+    else result = `❌ **Lost** (${nameOf(row.winnerId)} won)`;
+    const extra = [row.forfeit ? 'forfeit' : '', row.awardedBy ? `awarded by ${row.awardedBy}` : ''].filter(Boolean).join(', ');
+    const when = row.at ? `<t:${Math.floor(row.at / 1000)}:d>` : '';
+    lines.push(
+      `${when} vs **${row.opponent}** · ${row.entry} ${unit(row)} entry · ${[row.project, row.region].filter(Boolean).join(' ')}\n` +
+      `${result}${extra ? ` · ${extra}` : ''} · \`${row.id}\``
+    );
+  }
+  let description = lines.join('\n\n') || 'No matches played yet.';
+  if (description.length > 4000) description = `${description.slice(0, 3990)}…`;
+  return {
+    embeds: [{
+      title: `Match history · ${user.username}`,
+      color: 0x2f6bff,
+      description,
+      fields: [
+        { name: 'Played', value: String(rows.filter((row) => row.status === 'done').length), inline: true },
+        { name: 'Record', value: `${wins}W / ${losses}L`, inline: true },
+        { name: 'Tokens wagered', value: String(round(wagered)), inline: true },
+      ],
+      footer: { text: rows.length > 25 ? `Showing the latest 25 of ${rows.length}` : `${rows.length} match${rows.length === 1 ? '' : 'es'}` },
+    }],
+  };
 }
 
 function accountDetails(user) {
@@ -805,24 +914,38 @@ async function handleAward(interaction) {
     return;
   }
   let settled = false;
+  let awarded = null;
   try {
-    update((state) => {
+    awarded = update((state) => {
       const match = state.matches.find((item) => item.id === matchId);
-      if (!match || match.status === 'done') return;
+      if (!match) return null;
+      const nameOf = (id) => state.users.find((item) => item.id === id)?.username || 'player';
+      if (match.status === 'done') {
+        return match.winnerId ? { winner: nameOf(match.winnerId), by: match.awardedBy?.name || '' } : null;
+      }
       const winnerId = side === 'host' ? match.hostId : match.guestId;
       settleAgreed(state, match, winnerId);
+      match.awardedBy = { discordId: userId, name: interaction.user.username, at: Date.now() };
       if (match.review) {
         match.review.host = '';
         match.review.guest = '';
       }
       settled = true;
+      return { winner: nameOf(winnerId), by: interaction.user.username };
     });
   } catch (error) {
     if (interaction.replied || interaction.deferred) return;
     await interaction.reply({ content: error.status ? error.message : 'That award failed', ephemeral: true });
     return;
   }
-  await interaction.update({ components: freezeAwardButtons(interaction.message.components) });
+  const embeds = (interaction.message.embeds || []).map((embed) => embed.toJSON());
+  if (awarded && embeds[0]) {
+    const fields = (embeds[0].fields || []).filter((field) => field.name !== '🏆 Awarded');
+    const by = awarded.by ? ` by ${awarded.by}` : '';
+    fields.push({ name: '🏆 Awarded', value: `**${awarded.winner}** won${by} · <t:${Math.floor(Date.now() / 1000)}:R>`.slice(0, 1024), inline: false });
+    embeds[0] = { ...embeds[0], fields, color: 0x2ecc71 };
+  }
+  await interaction.update({ embeds, components: freezeAwardButtons(interaction.message.components) });
   if (settled) afterReviewSettled(matchId);
 }
 
@@ -885,7 +1008,28 @@ const TICKET_KINDS = {
   withdraw: { label: 'Withdrawal', description: 'A payout has not arrived', emoji: '💳', color: 0xf1c40f, category: 'Withdrawals' },
   account: { label: 'Account issue', description: 'Login, ban, or account help', emoji: '👤', color: 0x5865f2, category: 'Account issues' },
   content: { label: 'Content creation', description: 'Apply to make content for OGVAULT', emoji: '🎬', color: 0xe84393, category: 'Content creation' },
+  staff: { label: 'Staff application', description: 'Apply to be a Reviewer or Helper', emoji: '🛡️', color: 0x2ecc71, category: 'Staff applications' },
 };
+
+const STAFF_ROLES = {
+  reviewer: { name: 'Reviewer', duty: 'Watch match clips and award disputed wins fairly.' },
+  helper: { name: 'Helper', duty: 'Answer tickets, help players, and moderate chat and voice.' },
+};
+
+function staffRolePicker() {
+  return {
+    embeds: [new EmbedBuilder()
+      .setTitle('🛡️  Staff application')
+      .setColor(TICKET_KINDS.staff.color)
+      .setDescription('Which role are you applying for?')
+      .addFields(Object.values(STAFF_ROLES).map((role) => ({ name: role.name, value: role.duty })))],
+    components: [new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('ogvault:staffapp:reviewer').setLabel('Reviewer').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('ogvault:staffapp:helper').setLabel('Helper').setStyle(ButtonStyle.Success),
+    )],
+    ephemeral: true,
+  };
+}
 
 const TICKET_ACCESS = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles];
 
@@ -942,8 +1086,24 @@ async function ticketCategory(guild, kind) {
   });
 }
 
-function ticketModal(kind) {
+function ticketModal(kind, staffRole = '') {
   const choice = TICKET_KINDS[kind];
+  if (kind === 'staff') {
+    const role = STAFF_ROLES[staffRole];
+    const input = (id, label, style, placeholder, max) =>
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId(id).setLabel(label).setPlaceholder(placeholder).setStyle(style).setRequired(true).setMaxLength(max),
+      );
+    return new ModalBuilder()
+      .setCustomId(`ogvault:ticket:form:staff:${staffRole}`)
+      .setTitle(`${role.name} application`.slice(0, 45))
+      .addComponents(
+        input('age', 'How old are you?', TextInputStyle.Short, 'Example: 18', 10),
+        input('availability', 'Time zone and hours you can help', TextInputStyle.Short, 'Example: GMT, evenings and weekends', 150),
+        input('experience', 'Past staff or moderation experience', TextInputStyle.Paragraph, 'Servers, roles, how long', 1000),
+        input('why', `Why should you be a ${role.name}?`, TextInputStyle.Paragraph, 'Tell us about yourself', 1000),
+      );
+  }
   const modal = new ModalBuilder().setCustomId(`ogvault:ticket:form:${kind}`).setTitle(choice.label.slice(0, 45));
   if (kind === 'content') {
     return modal.addComponents(
@@ -1005,7 +1165,7 @@ async function canCloseTicket(interaction, opener) {
   return !!roles && ((owner && roles.has(owner.id)) || (helper && roles.has(helper.id)));
 }
 
-function ticketCard({ choice, detail, proof, platform, followers, profile, account, username }) {
+function ticketCard({ choice, detail, proof, platform, followers, profile, account, username, staff }) {
   const embed = new EmbedBuilder()
     .setAuthor({ name: 'OGVAULT Support' })
     .setTitle(`${choice.emoji}  ${choice.label}`)
@@ -1016,6 +1176,17 @@ function ticketCard({ choice, detail, proof, platform, followers, profile, accou
     )
     .setFooter({ text: 'Reply in this channel. Close the ticket when it is finished.' })
     .setTimestamp(new Date());
+  if (staff) {
+    return embed
+      .setTitle(`${choice.emoji}  ${staff.role} application`)
+      .setDescription(staff.why)
+      .addFields(
+        { name: 'Applying for', value: `**${staff.role}**`, inline: true },
+        { name: 'Age', value: staff.age, inline: true },
+        { name: 'Availability', value: staff.availability },
+        { name: 'Experience', value: staff.experience },
+      );
+  }
   if (platform) {
     return embed
       .setDescription(profile || 'No profile link')
@@ -1030,7 +1201,7 @@ function ticketCard({ choice, detail, proof, platform, followers, profile, accou
 async function handleTicket(interaction, id) {
   const guild = interaction.guild;
   if (id === 'ogvault:ticket:close') {
-    const opener = String(interaction.channel?.topic || '').match(/^ticket:(\d+)$/)?.[1];
+    const opener = String(interaction.channel?.topic || '').match(/^ticket:(\d+)(?::staff)?$/)?.[1];
     if (!opener || !(await canCloseTicket(interaction, opener))) {
       await interaction.reply({ content: 'You cannot close this ticket.', ephemeral: true });
       return;
@@ -1039,16 +1210,21 @@ async function handleTicket(interaction, id) {
     await interaction.channel.delete('Ticket closed').catch(() => {});
     return;
   }
-  const kind = id.split(':').pop();
+  const [, , , kind, staffKey] = id.split(':');
   const choice = TICKET_KINDS[kind];
-  if (!choice) {
+  const staffRole = kind === 'staff' ? STAFF_ROLES[staffKey] : null;
+  if (!choice || (kind === 'staff' && !staffRole)) {
     await interaction.reply({ content: 'Pick one of the issues in the list.', ephemeral: true });
     return;
   }
   await interaction.deferReply({ ephemeral: true });
   const channels = await guild.channels.fetch();
-  const topic = `ticket:${interaction.user.id}`;
+  const topic = kind === 'staff' ? `ticket:${interaction.user.id}:staff` : `ticket:${interaction.user.id}`;
   const existing = channels.find((channel) => channel.topic === topic);
+  if (existing && kind === 'staff') {
+    await interaction.editReply({ content: `You already have a staff application open: ${existing}` });
+    return;
+  }
   if (existing) {
     const category = await ticketCategory(guild, kind);
     if (existing.parentId !== category.id) await existing.setParent(category.id, { lockPermissions: false });
@@ -1058,14 +1234,19 @@ async function handleTicket(interaction, id) {
   const { helper, owner } = await ticketAccessRoles(guild);
   const category = await ticketCategory(guild, kind);
   const slug = String(interaction.user.username || 'user').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 16) || 'user';
-  const detail = kind === 'content' ? '' : interaction.fields.getTextInputValue('detail').slice(0, 1000);
-  const proof = kind === 'content' ? '' : interaction.fields.getTextInputValue('proof').slice(0, 1000);
+  const field = (name, max) => interaction.fields.getTextInputValue(name).slice(0, max) || '—';
+  const staff = staffRole
+    ? { role: staffRole.name, age: field('age', 10), availability: field('availability', 150), experience: field('experience', 1000), why: field('why', 1000) }
+    : null;
+  const plain = kind !== 'content' && !staff;
+  const detail = plain ? interaction.fields.getTextInputValue('detail').slice(0, 1000) : '';
+  const proof = plain ? interaction.fields.getTextInputValue('proof').slice(0, 1000) : '';
   const platform = kind === 'content' ? interaction.fields.getTextInputValue('platform').slice(0, 100) : '';
   const followers = kind === 'content' ? interaction.fields.getTextInputValue('followers').slice(0, 100) : '';
   const profile = kind === 'content' ? interaction.fields.getTextInputValue('profile').slice(0, 300) : '';
   const linked = load().users?.find((user) => !user.npc && String(user.discordId || '') === interaction.user.id);
   const channel = await guild.channels.create({
-    name: `ticket-${slug}`,
+    name: staff ? `apply-${staffKey}-${slug}` : `ticket-${slug}`,
     type: ChannelType.GuildText,
     parent: category.id,
     topic,
@@ -1088,6 +1269,7 @@ async function handleTicket(interaction, id) {
         profile,
         account: linked?.username || 'Not linked',
         username: interaction.user.username,
+        staff,
       }),
     ],
     components: [
@@ -1121,11 +1303,15 @@ async function handleCommunityButton(interaction) {
     }
     return;
   }
+  if (id === 'ogvault:verify:password') {
+    await interaction.showModal(passwordLinkModal());
+    return;
+  }
   if (id === 'ogvault:verify') {
     const linked = load().users?.find((user) => !user.npc && String(user.discordId || '') === interaction.user.id);
     if (!linked) {
       await interaction.reply({
-        content: 'Sign in with Discord on https://ogvault.co.uk first, then press this again.',
+        content: 'Sign in with Discord on https://ogvault.co.uk first, then press this again. Registered with an email instead? Press **Link with password**.',
         ephemeral: true,
       });
       return;
@@ -1290,7 +1476,87 @@ async function replyEarn(interaction) {
   await interaction.reply({ embeds: [embed], ephemeral: true });
 }
 
+const LINK_TRIES = 5;
+const LINK_WINDOW_MS = 15 * 60 * 1000;
+const linkTries = new Map();
+
+function passwordLinkModal() {
+  return new ModalBuilder()
+    .setCustomId('ogvault:link:form')
+    .setTitle('Link your OGVAULT account')
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('login')
+          .setLabel('Email or username')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(80),
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('password')
+          .setLabel('Password')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMinLength(1)
+          .setMaxLength(64),
+      ),
+    );
+}
+
+function passwordMatches(password, stored) {
+  const [salt, hash] = String(stored || '').split(':');
+  if (!salt || !hash) return false;
+  const next = crypto.scryptSync(password, salt, 32);
+  const prev = Buffer.from(hash, 'hex');
+  return prev.length === next.length && crypto.timingSafeEqual(prev, next);
+}
+
+async function handlePasswordLink(interaction) {
+  const now = Date.now();
+  const tries = (linkTries.get(interaction.user.id) || []).filter((at) => now - at < LINK_WINDOW_MS);
+  if (tries.length >= LINK_TRIES) {
+    await interaction.reply({ content: 'Too many attempts. Try again in 15 minutes.', ephemeral: true });
+    return;
+  }
+  tries.push(now);
+  linkTries.set(interaction.user.id, tries);
+  const login = interaction.fields.getTextInputValue('login').trim().toLowerCase();
+  const password = interaction.fields.getTextInputValue('password');
+  let linked;
+  try {
+    linked = update((state) => {
+      const user = state.users.find((item) => !item.npc && (String(item.email || '').toLowerCase() === login || item.username.toLowerCase() === login));
+      if (!user || !user.password || !passwordMatches(password, user.password)) fail(401, 'Email/username or password is wrong.');
+      if (user.banUntil > Date.now()) fail(403, 'This account is banned.');
+      if (user.discordId && user.discordId !== interaction.user.id) fail(409, 'That account is already linked to a different Discord. Open a support ticket if this is wrong.');
+      const other = state.users.find((item) => !item.npc && item.id !== user.id && item.discordId === interaction.user.id);
+      if (other) fail(409, `This Discord is already linked to ${other.username}.`);
+      user.discordId = interaction.user.id;
+      user.discordUsername = interaction.user.username;
+      user.discordGlobalName = interaction.user.globalName || null;
+      return { username: user.username, discordId: user.discordId, vipUntil: user.vipUntil };
+    });
+  } catch (error) {
+    await interaction.reply({ content: error?.status ? error.message : 'Could not link right now. Try again.', ephemeral: true });
+    return;
+  }
+  linkTries.delete(interaction.user.id);
+  const memberRole = await roleByName(interaction.guild, 'Member');
+  if (memberRole) await interaction.member.roles.add(memberRole).catch(() => {});
+  syncGoldVip(linked).catch(() => {});
+  await interaction.reply({
+    content: `Linked as **${linked.username}**. You can talk in the member channels now, and sign in on the site with Discord from now on.`,
+    ephemeral: true,
+  });
+}
+
 async function handleCommand(interaction) {
+  if (interaction.commandName === 'report') {
+    await handleReport(interaction).catch(() => {});
+    return;
+  }
   if (interaction.commandName === 'earn') {
     await replyEarn(interaction).catch(() => {});
     return;
@@ -1385,6 +1651,7 @@ async function handleCommand(interaction) {
       }
       await interaction.guild.members.addRole({ user: user.id, role, reason: 'OGVAULT /give' });
       if (role.name === 'Helper') await syncTicketAccess(interaction.guild);
+      if (role.name === 'Helper' || role.name === REVIEWER_ROLE_NAME) await ensureStaffChat(interaction.guild).catch(() => {});
       await interaction.reply({ content: `${user.username} now has ${role.name}.`, ephemeral: true });
       return;
     }
@@ -1437,6 +1704,10 @@ async function handleCommand(interaction) {
         content: `${result.username} has ${Number(result.balance).toFixed(2)} tokens and ${result.points} Vault Points.`,
         ephemeral: true,
       });
+      return;
+    }
+    if (interaction.commandName === 'match' && interaction.options.getSubcommand() === 'history') {
+      await interaction.reply({ ...matchHistoryPayload(interaction.options.getString('user')), ephemeral: true });
       return;
     }
     if (interaction.commandName === 'check' && interaction.options.getSubcommand() === 'rate') {
@@ -1568,7 +1839,9 @@ const COMMAND_GUIDE = [
   ['/ban', 'Ban a site account from login and matchmaking for a number of hours.'],
   ['/unban', 'Clear a site ban so the player can sign in again.'],
   ['/balance', 'Anyone can see their own tokens and Vault Points. Owners can add a username to look up a player.'],
+  ['/report', 'Anyone can report a member with a reason. Helpers get pinged in #filters and can Warn or Dismiss. 3 warnings in a week means a 1 hour timeout.'],
   ['/earn', 'Anyone can see how to earn 0.02 tokens a day by putting ogvault.co.uk in their Discord status, and their progress today.'],
+  ['/match history', 'Every match a player has played: date, opponent, entry, project and region, who won, payout, forfeits, and who awarded disputes.'],
   ['/check rate', 'Live count of members showing ogvault.co.uk in their Discord status, and whether yours is detected.'],
   ['/blackjack bias', 'Show or set how often a player win is settled for the dealer. 0 is fair, 100 is the maximum edge.'],
   ['/give', 'Give any Discord role to a member, including Helper, Reviewer, and Content Creator.'],
@@ -1611,13 +1884,372 @@ function commandGuideEmbeds() {
       .setColor(0xf1c40f)
       .setDescription(rest.join('\n\n') || '—')
       .addFields(
-        { name: 'Reviewer', value: 'Can press the award buttons on a clip-review message. No slash commands.' },
-        { name: 'Helper', value: 'Can see support tickets, reply in them, and close them. No slash commands.' },
+        { name: 'Reviewer', value: 'Can press the award buttons on a clip-review message and talk in #staff-chat. No slash commands.' },
+        { name: 'Helper', value: 'Can see support tickets, reply in them, close them, and talk in #staff-chat. No slash commands.' },
         { name: 'Content Creator', value: 'Display role only. No commands.' },
         { name: 'Member', value: 'Can talk in general, clips, and the community channels after linking a vault account. No slash commands.' },
         { name: 'Everyone', value: 'Can read the start-here channels, link a vault account, pick NA or EU, and open a support ticket.' },
       ),
   ];
+}
+
+const MEDALS = ['🥇', '🥈', '🥉'];
+const SITE_URL = 'https://ogvault.co.uk';
+
+const CONFETTI = '🎊 ✨ 🎉 ✨ 🎊 ✨ 🎉 ✨ 🎊 ✨ 🎉 ✨ 🎊';
+const PLACE = ['Vault Champion', 'Runner-up', 'Third place'];
+
+function winnerName(row) {
+  return row.discordId ? `<@${row.discordId}>` : `**${row.username}**`;
+}
+
+export function weeklyResultMessage(result) {
+  const day = (ms) => `<t:${Math.floor(ms / 1000)}:D>`;
+  const [champ, ...rest] = result.winners;
+  const embed = new EmbedBuilder()
+    .setAuthor({ name: 'OGVAULT  •  Weekly Vault', iconURL: `${SITE_URL}/logo.png`, url: `${SITE_URL}/weekly` })
+    .setTitle('🏆  The Vault Has Been Cracked  🏆')
+    .setURL(`${SITE_URL}/weekly`)
+    .setColor(0xf5c451)
+    .setThumbnail(`${SITE_URL}/logo.png`)
+    .setFooter({ text: 'Prizes were added to winners\' balances automatically', iconURL: `${SITE_URL}/logo.png` })
+    .setTimestamp(result.end);
+  if (!champ) {
+    embed.setDescription([
+      `-# ${day(result.start)} – ${day(result.end)}`,
+      '',
+      'Nobody earned Vault Points this week, so the vault stays locked. 🔒',
+      '',
+      '🔥 **A new week is live.** Be the first on the board!',
+    ].join('\n'));
+    return { content: '', embeds: [embed], allowedMentions: { parse: [] } };
+  }
+  embed.setDescription([
+    CONFETTI,
+    `-# Week of ${day(result.start)} – ${day(result.end)}`,
+    '',
+    `## 👑  ${champ.discordId ? `<@${champ.discordId}>` : champ.username}`,
+    `🥇 **${PLACE[0]}**  •  ${Math.round(champ.points)} Vault Points`,
+    `💰 **+${champ.prize} tokens** added to the vault`,
+    '',
+    CONFETTI,
+  ].join('\n'));
+  rest.forEach((row) => {
+    embed.addFields({
+      name: `${MEDALS[row.place - 1]}  ${PLACE[row.place - 1]}`,
+      value: `${winnerName(row)}\n${Math.round(row.points)} Vault Points\n💰 **+${row.prize} tokens**`,
+      inline: true,
+    });
+  });
+  embed.addFields({
+    name: '\u200b',
+    value: '🔥 **A new week is live.** Claim your daily Vault Point and win token Kill Races to climb.\n🏅 Top 3 win **8**, **4** and **2 tokens**. [See the board](' + SITE_URL + '/weekly)',
+  });
+  const mentions = result.winners.map((row) => row.discordId).filter(Boolean);
+  const shout = result.winners.map((row) => `${MEDALS[row.place - 1]} ${winnerName(row)}`).join('  ');
+  return {
+    content: `🎉🎊 **Congratulations to this week's Weekly Vault winners!** 🎊🎉\n${shout}`,
+    embeds: [embed],
+    allowedMentions: { users: mentions },
+  };
+}
+
+async function announceWeeklyResults() {
+  if (!bot?.isReady?.()) return;
+  update((state) => { ensurePotw(state); });
+  const pending = (load().potwResults || []).filter((row) => !row.announced);
+  if (!pending.length) return;
+  const guild = statusGuild();
+  if (!guild) return;
+  const channels = await guild.channels.fetch();
+  const channel = channels.find((item) => item?.type === ChannelType.GuildText && item.name === 'announcements');
+  if (!channel) return;
+  for (const result of pending) {
+    const sent = await channel.send(weeklyResultMessage(result)).catch(() => null);
+    if (sent) await sent.react('🎉').catch(() => {});
+    if (!sent) return;
+    update((state) => {
+      const row = (state.potwResults || []).find((item) => item.id === result.id);
+      if (row) row.announced = true;
+    });
+  }
+}
+
+const WARN_LIMIT = 3;
+const WARN_TIMEOUT_MS = 60 * 60 * 1000;
+const WARN_RESET_MS = 7 * 24 * 60 * 60 * 1000;
+let filtersChannelId = '';
+
+async function postFilters(payload) {
+  if (!filtersChannelId || !bot) return null;
+  const channel = await bot.channels.fetch(filtersChannelId).catch(() => null);
+  return channel ? channel.send({ allowedMentions: { parse: ['roles'] }, ...payload }).catch(() => null) : null;
+}
+
+async function warnMember(guild, userId, reason, by) {
+  const now = Date.now();
+  const count = update((state) => {
+    state.discordWarnings = state.discordWarnings || {};
+    const row = state.discordWarnings[userId];
+    const next = row && now - row.at < WARN_RESET_MS ? row.count + 1 : 1;
+    state.discordWarnings[userId] = { count: next >= WARN_LIMIT ? 0 : next, at: now };
+    return next;
+  });
+  const member = await guild.members.fetch(userId).catch(() => null);
+  let timedOut = false;
+  if (count >= WARN_LIMIT && member) {
+    timedOut = await member.timeout(WARN_TIMEOUT_MS, `${WARN_LIMIT} warnings: ${reason}`.slice(0, 500)).then(() => true).catch(() => false);
+  }
+  const dm = timedOut
+    ? `You were timed out in OGVAULT for 1 hour after ${WARN_LIMIT} warnings. Last reason: ${reason}`
+    : `Warning ${count}/${WARN_LIMIT} in OGVAULT: ${reason}. At ${WARN_LIMIT} warnings you are timed out for 1 hour.`;
+  if (member) await member.send(dm).catch(() => {});
+  await postFilters({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(timedOut ? 0xe74c3c : 0xf39c12)
+        .setTitle(timedOut ? 'Timed out for 1 hour' : `Warning ${count}/${WARN_LIMIT}`)
+        .setDescription(`<@${userId}> · ${reason}`.slice(0, 4000))
+        .setFooter({ text: `By ${by}` })
+        .setTimestamp(),
+    ],
+  });
+  return { count, timedOut };
+}
+
+async function onAutoModAction(execution) {
+  if (execution.action?.type !== AutoModerationActionType.BlockMessage) return;
+  const guild = execution.guild;
+  if (!guild || !execution.userId) return;
+  const rule = execution.autoModerationRule?.name || 'AutoMod';
+  const word = execution.matchedKeyword ? ` (${execution.matchedKeyword})` : '';
+  await warnMember(guild, execution.userId, `${rule.replace(/^OGVAULT:\s*/, '')}${word}`, 'AutoMod');
+}
+
+function isStaffMember(member) {
+  if (!member) return false;
+  if (adminIds().includes(member.id)) return true;
+  return member.roles.cache.some((role) => [REVIEWER_ROLE_NAME, 'Helper', 'Owner'].includes(role.name));
+}
+
+async function handleReport(interaction) {
+  const target = interaction.options.getUser('user');
+  const reason = interaction.options.getString('reason');
+  if (!target || target.bot) {
+    await interaction.reply({ content: 'Pick a member to report.', ephemeral: true });
+    return;
+  }
+  if (target.id === interaction.user.id) {
+    await interaction.reply({ content: 'You cannot report yourself.', ephemeral: true });
+    return;
+  }
+  const helper = await roleByName(interaction.guild, 'Helper');
+  const voice = interaction.guild.voiceStates.cache.get(target.id)?.channel;
+  const sent = await postFilters({
+    content: helper ? `<@&${helper.id}> new report` : 'New report',
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x3498db)
+        .setTitle('Member report')
+        .addFields(
+          { name: 'Reported', value: `<@${target.id}> (${target.id})`, inline: true },
+          { name: 'By', value: `<@${interaction.user.id}>`, inline: true },
+          { name: 'Where', value: voice ? `🔊 ${voice.name}` : `<#${interaction.channelId}>`, inline: true },
+          { name: 'Reason', value: reason.slice(0, 1000) },
+        )
+        .setTimestamp(),
+    ],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`ogmod:warn:${target.id}`).setLabel('Warn').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`ogmod:dismiss:${target.id}`).setLabel('Dismiss').setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+  await interaction.reply({
+    content: sent ? 'Thanks. Your report was sent to the Helpers.' : 'Reports are not set up yet. Open a support ticket instead.',
+    ephemeral: true,
+  });
+}
+
+async function handleModButton(interaction) {
+  if (!isStaffMember(interaction.member)) {
+    await interaction.reply({ content: 'Only Helpers can do that.', ephemeral: true });
+    return;
+  }
+  const [, action, userId] = interaction.customId.split(':');
+  const original = interaction.message.embeds[0];
+  const reason = original?.fields?.find((field) => field.name === 'Reason')?.value || 'Reported by a member';
+  const done = (text) => interaction.update({
+    embeds: original ? [EmbedBuilder.from(original).setFooter({ text })] : [],
+    components: [],
+  });
+  if (action === 'dismiss') {
+    await done(`Dismissed by ${interaction.user.username}`);
+    return;
+  }
+  if (action === 'warn') {
+    const result = await warnMember(interaction.guild, userId, reason, interaction.user.username);
+    await done(result.timedOut
+      ? `Warned by ${interaction.user.username} · timed out for 1 hour`
+      : `Warned by ${interaction.user.username} · ${result.count}/${WARN_LIMIT}`);
+  }
+}
+
+async function ensureAutoMod(guild, alertChannel) {
+  const roles = await guild.roles.fetch();
+  const exemptRoles = [REVIEWER_ROLE_NAME, 'Helper', 'Owner']
+    .map((name) => roles.find((role) => role.name === name)?.id)
+    .filter(Boolean);
+  const exemptChannels = (await guild.channels.fetch())
+    .filter((item) => item?.type === ChannelType.GuildText && (item.name === 'staff-chat' || item.name === 'filters'))
+    .map((item) => item.id);
+  const block = (text) => ({ type: AutoModerationActionType.BlockMessage, metadata: { customMessage: text } });
+  const alert = alertChannel ? [{ type: AutoModerationActionType.SendAlertMessage, metadata: { channel: alertChannel.id } }] : [];
+  const timeout = (seconds) => ({ type: AutoModerationActionType.Timeout, metadata: { durationSeconds: seconds } });
+  const rules = [
+    {
+      name: 'OGVAULT: slurs and NSFW',
+      triggerType: AutoModerationRuleTriggerType.KeywordPreset,
+      triggerMetadata: {
+        presets: [
+          AutoModerationRuleKeywordPresetType.Slurs,
+          AutoModerationRuleKeywordPresetType.SexualContent,
+          AutoModerationRuleKeywordPresetType.Profanity,
+        ],
+      },
+      actions: [block('Keep it clean. That message was blocked.'), ...alert],
+    },
+    {
+      name: 'OGVAULT: scams and invites',
+      triggerType: AutoModerationRuleTriggerType.Keyword,
+      triggerMetadata: {
+        regexPatterns: [
+          'discord(?:\\.gg|(?:app)?\\.com/invite)/\\S+',
+          'free\\s*nitro',
+          'steam\\s*gift',
+          'airdrop',
+          '(?:grabify|iplogger|2no)\\.(?:link|org|co)',
+        ],
+      },
+      actions: [block('Links to other servers and giveaway scams are not allowed.'), ...alert],
+    },
+    {
+      name: 'OGVAULT: mention spam',
+      triggerType: AutoModerationRuleTriggerType.MentionSpam,
+      triggerMetadata: { mentionTotalLimit: 5, mentionRaidProtectionEnabled: true },
+      actions: [block('Too many mentions.'), timeout(10 * 60), ...alert],
+    },
+    {
+      name: 'OGVAULT: spam',
+      triggerType: AutoModerationRuleTriggerType.Spam,
+      triggerMetadata: {},
+      actions: [block('That looked like spam.'), ...alert],
+    },
+  ];
+  const existing = await guild.autoModerationRules.fetch();
+  for (const rule of rules) {
+    const payload = {
+      name: rule.name,
+      eventType: AutoModerationRuleEventType.MessageSend,
+      triggerType: rule.triggerType,
+      triggerMetadata: rule.triggerMetadata,
+      actions: rule.actions,
+      enabled: true,
+      exemptRoles,
+      exemptChannels,
+    };
+    const current = existing.find((item) => item.name === rule.name)
+      || existing.find((item) => item.triggerType === rule.triggerType
+        && (rule.triggerType === AutoModerationRuleTriggerType.Spam
+          || rule.triggerType === AutoModerationRuleTriggerType.MentionSpam
+          || rule.triggerType === AutoModerationRuleTriggerType.KeywordPreset));
+    try {
+      if (current) {
+        const { triggerType, ...edit } = payload;
+        await current.edit(edit);
+      } else {
+        await guild.autoModerationRules.create(payload);
+      }
+    } catch (error) {
+      console.error(`AutoMod rule failed: ${rule.name}`, error?.message || '');
+    }
+  }
+}
+
+async function ensureVoiceChannels(guild) {
+  const channels = await guild.channels.fetch();
+  const community = channels.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === 'Community');
+  const roles = await guild.roles.fetch();
+  const member = roles.find((role) => role.name === 'Member');
+  const helper = roles.find((role) => role.name === 'Helper');
+  const P = PermissionFlagsBits;
+  const voiceUse = [P.ViewChannel, P.Connect, P.Speak, P.Stream, P.UseVAD];
+  const noFun = [P.UseSoundboard, P.UseExternalSounds];
+  const moderation = [P.MuteMembers, P.DeafenMembers, P.MoveMembers];
+  const base = community
+    ? community.permissionOverwrites.cache.map((item) => ({ id: item.id, type: item.type, allow: item.allow.bitfield, deny: item.deny.bitfield }))
+    : [];
+  const merge = (id, allow, deny) => {
+    const row = base.find((item) => item.id === id);
+    const allowBits = allow.reduce((sum, bit) => sum | bit, 0n);
+    const denyBits = deny.reduce((sum, bit) => sum | bit, 0n);
+    if (row) {
+      row.allow = (BigInt(row.allow) | allowBits) & ~denyBits;
+      row.deny = (BigInt(row.deny) | denyBits) & ~allowBits;
+    } else base.push({ id, allow: allowBits, deny: denyBits });
+  };
+  merge(guild.roles.everyone.id, [], [...noFun, ...moderation]);
+  if (member) merge(member.id, voiceUse, [...noFun, ...moderation]);
+  if (helper) merge(helper.id, [...voiceUse, ...moderation], noFun);
+  merge(guild.members.me.id, [...voiceUse, ...moderation], []);
+  for (const name of ['General', 'Retrac', 'EON']) {
+    let channel = channels.find((item) => item.type === ChannelType.GuildVoice && item.name === name && (!community || item.parentId === community.id));
+    if (!channel) channel = await guild.channels.create({ name, type: ChannelType.GuildVoice, parent: community?.id });
+    await channel.permissionOverwrites.set(base.map((item) => ({ id: item.id, allow: item.allow, deny: item.deny, ...(item.type != null ? { type: item.type } : {}) })));
+  }
+}
+
+function ensureStaffChat(guild) {
+  return ensureStaffText(guild, 'staff-chat', 'Private chat for Helpers and Reviewers.');
+}
+
+function ensureFilters(guild) {
+  return ensureStaffText(guild, 'filters', 'AutoMod alerts, warnings, and member reports.');
+}
+
+async function ensureStaffText(guild, channelName, topic) {
+  const channels = await guild.channels.fetch();
+  const staff = channels.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === 'Staff');
+  const roles = await guild.roles.fetch();
+  const staffRoles = [REVIEWER_ROLE_NAME, 'Helper', 'Owner']
+    .map((name) => roles.find((role) => role.name === name))
+    .filter(Boolean);
+  const talk = [
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.ReadMessageHistory,
+    PermissionFlagsBits.AttachFiles,
+    PermissionFlagsBits.EmbedLinks,
+  ];
+  const permissionOverwrites = [
+    { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+    { id: guild.members.me.id, allow: talk },
+    ...staffRoles.map((role) => ({ id: role.id, allow: talk })),
+  ];
+  const existing = channels.find((item) => item.type === ChannelType.GuildText && item.name === channelName);
+  if (existing) {
+    await existing.permissionOverwrites.set(permissionOverwrites);
+    if (staff && existing.parentId !== staff.id) await existing.setParent(staff.id, { lockPermissions: false });
+    return existing;
+  }
+  return guild.channels.create({
+    name: channelName,
+    type: ChannelType.GuildText,
+    parent: staff?.id,
+    topic,
+    permissionOverwrites,
+  });
 }
 
 async function publishCommandGuide(guild) {
@@ -1652,7 +2284,8 @@ export function startDiscordAdmin(withPresence = true) {
   }
   const guildId = String(process.env.DISCORD_GUILD_ID || '').trim();
   botFailed = false;
-  const intents = withPresence ? [GatewayIntentBits.Guilds, GatewayIntentBits.GuildPresences] : [GatewayIntentBits.Guilds];
+  const baseIntents = [GatewayIntentBits.Guilds, GatewayIntentBits.AutoModerationExecution, GatewayIntentBits.GuildVoiceStates];
+  const intents = withPresence ? [...baseIntents, GatewayIntentBits.GuildPresences] : baseIntents;
   const client = new Client({ intents });
   bot = client;
   presenceEnabled = withPresence;
@@ -1679,6 +2312,13 @@ export function startDiscordAdmin(withPresence = true) {
         await ticketCategory(await client.guilds.fetch(guildId), kind);
       }
       await publishCommandGuide(await client.guilds.fetch(guildId));
+      await ensureStaffChat(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up staff-chat'));
+      const filters = await ensureFilters(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up filters'));
+      filtersChannelId = filters?.id || '';
+      await ensureAutoMod(await client.guilds.fetch(guildId), filters).then(() => console.log('AutoMod rules applied')).catch((error) => console.error('Could not set up AutoMod', error?.message || ''));
+      announceWeeklyResults().catch(() => console.error('Weekly Vault announcement failed'));
+      setInterval(() => { announceWeeklyResults().catch(() => console.error('Weekly Vault announcement failed')); }, 5 * 60 * 1000);
+      await ensureVoiceChannels(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up voice channels'));
       applyBotStatus();
       console.log('Reviewer role can read message history');
     } catch (error) {
@@ -1692,7 +2332,14 @@ export function startDiscordAdmin(withPresence = true) {
         interaction.reply({ content: 'Pick one of the issues in the list.', ephemeral: true }).catch(() => {});
         return;
       }
-      interaction.showModal(ticketModal(kind)).catch(() => {});
+      if (kind === 'staff') interaction.reply(staffRolePicker()).catch(() => {});
+      else interaction.showModal(ticketModal(kind)).catch(() => {});
+      return;
+    }
+    if (interaction.isButton() && String(interaction.customId || '').startsWith('ogvault:staffapp:')) {
+      const role = interaction.customId.split(':').pop();
+      if (!STAFF_ROLES[role]) return;
+      interaction.showModal(ticketModal('staff', role)).catch(() => {});
       return;
     }
     if (interaction.isModalSubmit() && String(interaction.customId || '').startsWith('ogvault:ticket:form:')) {
@@ -1701,6 +2348,14 @@ export function startDiscordAdmin(withPresence = true) {
         if (interaction.deferred || interaction.replied) await interaction.editReply({ content }).catch(() => {});
         else await interaction.reply({ content, ephemeral: true }).catch(() => {});
       });
+      return;
+    }
+    if (interaction.isModalSubmit() && interaction.customId === 'ogvault:link:form') {
+      handlePasswordLink(interaction).catch(() => {});
+      return;
+    }
+    if (interaction.isButton() && String(interaction.customId || '').startsWith('ogmod:')) {
+      handleModButton(interaction).catch(() => {});
       return;
     }
     if (interaction.isButton() && String(interaction.customId || '').startsWith('ogvault:')) {
@@ -1725,6 +2380,9 @@ export function startDiscordAdmin(withPresence = true) {
     }
     if (!interaction.isChatInputCommand()) return;
     handleCommand(interaction).catch(() => {});
+  });
+  client.on('autoModerationActionExecution', (execution) => {
+    onAutoModAction(execution).catch(() => console.error('AutoMod warning failed'));
   });
   client.on('error', () => {
     console.error('Discord admin bot error');

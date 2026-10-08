@@ -349,6 +349,7 @@ export function ensurePotw(state, timeZone) {
     const from = Math.max(start, state.potw.paidUntil || 0);
     if (from < end) {
       const ranked = potwLeaders(state, from, end);
+      const winners = [];
       POTW_PRIZES.forEach((prize, index) => {
         const row = ranked[index];
         if (!row) return;
@@ -357,7 +358,11 @@ export function ensurePotw(state, timeZone) {
         credit(state, user, prize, 'potw', { place: index + 1 });
         user.stats.earned = round(user.stats.earned + prize);
         state.prizes = round(state.prizes + prize);
+        winners.push({ place: index + 1, userId: user.id, username: user.username, discordId: user.discordId || null, points: row.points, prize });
       });
+      if (!Array.isArray(state.potwResults)) state.potwResults = [];
+      state.potwResults.push({ id: rid('wv'), start: from, end, winners, announced: false });
+      if (state.potwResults.length > 20) state.potwResults.splice(0, state.potwResults.length - 20);
     }
     let nextEnd = nextSundayMidnight(end, zone);
     if (!(nextEnd > end)) nextEnd = end + WEEK_MS;
@@ -984,6 +989,7 @@ export function walletSnapshot(state, user) {
     user: userDto(user, { self: true }),
     txs: state.txs.filter((tx) => tx.userId === user.id).slice(0, 40),
     withdrawals: (state.withdrawals || []).filter((row) => row.userId === user.id).slice(0, 20).map(withdrawalDto),
+    cashout: { deposited: totalDeposited(state, user), required: CASHOUT_DEPOSIT_MIN, unlocked: cashoutUnlocked(state, user) },
   };
 }
 
@@ -1012,6 +1018,7 @@ export function creditPaidCheckout(state, session) {
   if (already) return { duplicate: true, credited: 0 };
   const user = state.users.find((item) => item.id === userId && !item.npc);
   if (!user) fail(404, 'That player is no longer on the server');
+  user.deposited = round(totalDeposited(state, user) + tokens);
   credit(state, user, tokens, 'deposit', { price: tokens, sessionId, provider: 'stripe', channel: 'card' });
   state.paidCheckouts.push(sessionId);
   if (state.paidCheckouts.length > 500) state.paidCheckouts.splice(0, state.paidCheckouts.length - 500);
@@ -1037,6 +1044,7 @@ export function creditNowPayment(state, body) {
   if (already) return { credited: 0, duplicate: true, username: invoice.username || '', price: invoice.price };
   const user = state.users.find((item) => item.id === invoice.userId && !item.npc);
   if (!user) fail(404, 'That player is no longer on the server');
+  user.deposited = round(totalDeposited(state, user) + invoice.tokens);
   credit(state, user, invoice.tokens, 'deposit', { price: invoice.tokens, sessionId: key, provider: 'nowpayments', channel: 'crypto' });
   state.paidCheckouts.push(key);
   if (state.paidCheckouts.length > 500) state.paidCheckouts.splice(0, state.paidCheckouts.length - 500);
@@ -1065,7 +1073,28 @@ function withdrawalDestination(method, body) {
   return { accountName, accountNumber, sortCode };
 }
 
+export const CASHOUT_DEPOSIT_MIN = 5;
+
+export function totalDeposited(state, user) {
+  if (!user) return 0;
+  const fromTxs = (state.txs || [])
+    .filter((tx) => tx.userId === user.id && tx.type === 'deposit' && tx.amount > 0)
+    .reduce((sum, tx) => sum + tx.amount, 0);
+  return round(Math.max(user.deposited || 0, fromTxs));
+}
+
+export function cashoutUnlocked(state, user) {
+  return totalDeposited(state, user) + 1e-9 >= CASHOUT_DEPOSIT_MIN;
+}
+
+function assertCashoutUnlocked(state, user, action) {
+  if (cashoutUnlocked(state, user)) return;
+  const left = round(CASHOUT_DEPOSIT_MIN - totalDeposited(state, user));
+  fail(403, `Deposit at least ${CASHOUT_DEPOSIT_MIN} tokens in total before you can ${action}. ${left} more to go.`);
+}
+
 export function requestWithdrawal(state, user, body) {
+  assertCashoutUnlocked(state, user, 'withdraw');
   const amount = cashAmount(body.amount, 'a withdrawal amount');
   if (amount < MIN_WITHDRAW) fail(400, 'Minimum withdrawal is 15');
   const fee = WITHDRAW_FEE;
@@ -1100,6 +1129,7 @@ export function requestWithdrawal(state, user, body) {
 export function sendTip(state, user, rawAmount, username) {
   const name = String(username || '').trim();
   if (!name) fail(400, 'Enter a username');
+  assertCashoutUnlocked(state, user, 'send tips');
   const quote = tipQuote(user, rawAmount);
   if (!(quote.amount > 0)) fail(400, 'Enter a tip amount');
   if (quote.amount > 1000) fail(400, 'That tip is too large');

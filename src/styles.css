@@ -1439,3 +1439,44 @@ label .have { float: right; font-weight: 500; font-size: 12px; display: inline-f
 .bj-currency button:hover { color: var(--text); }
 .bj-currency button.on { background: rgba(245, 196, 81, 0.12); color: var(--text); }
 .bj-currency button.points.on { background: rgba(201, 209, 220, 0.12); }
+
+.stake .points, .stake .points span { display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-size: inherit; letter-spacing: normal; text-transform: none; }
+.lobby-row { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; align-items: stretch; }
+.lobby-rules { background: #121822; border: 1px solid var(--line); border-radius: 16px; padding: 16px 16px 6px; display: flex; flex-direction: column; }
+.lobby-rules header { display: flex; flex-direction: column; gap: 2px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.lobby-rules header span { color: var(--muted); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 600; }
+.lobby-rules header small { color: var(--text); font-size: 14px; font-weight: 600; }
+.lobby-rules ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; flex: 1; }
+.lobby-rules li { display: flex; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.lobby-rules li:last-child { border-bottom: 0; }
+.lobby-rules .rule-no { flex: none; width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 700; color: #9db8ff; background: rgba(47, 107, 255, 0.12); border: 1px solid rgba(47, 107, 255, 0.3); }
+.lobby-rules strong { display: block; font-size: 13px; font-weight: 600; color: var(--text); }
+.lobby-rules p { margin: 2px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+.lobby-rules li:nth-child(3) strong { color: #ffb4a8; }
+@media (max-width: 1280px) { .lobby-row { grid-template-columns: 1fr; } }
+.content.wide { max-width: 1640px; }
+@media (min-width: 1281px) { .content.wide .lobby-row { grid-template-columns: minmax(0, 1fr) 340px; } }
+.content.wide .lobby-grid { grid-template-columns: 1fr 1.1fr 1fr; }
+.content.wide .lobby-rules p { font-size: 13px; }
+
+.welcome-back { z-index: 9000; backdrop-filter: blur(8px); }
+.welcome-modal { position: relative; overflow: hidden; max-width: 460px; width: calc(100% - 32px); padding: 34px 30px 22px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; border: 1px solid rgba(201, 209, 220, 0.18); }
+.welcome-glow { position: absolute; inset: -40% -20% auto; height: 220px; background: radial-gradient(closest-side, rgba(201, 209, 220, 0.16), transparent); pointer-events: none; }
+.welcome-kicker { position: relative; font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.welcome-modal h2 { position: relative; margin: 0; font-size: 24px; font-weight: 600; line-height: 1.25; }
+.welcome-lead { position: relative; margin: 0; color: var(--muted); line-height: 1.5; }
+.welcome-gift { position: relative; display: flex; align-items: center; gap: 14px; margin: 10px 0 6px; padding: 14px 22px; border-radius: 14px; background: linear-gradient(180deg, rgba(201, 209, 220, 0.1), rgba(201, 209, 220, 0.03)); border: 1px solid rgba(201, 209, 220, 0.28); text-align: left; animation: welcome-pop 520ms var(--ease-out) 120ms backwards; }
+.welcome-gift strong { display: block; font-size: 20px; font-weight: 700; color: #e6ebf2; }
+.welcome-gift small { color: var(--muted); font-size: 12px; }
+.welcome-list { position: relative; list-style: none; margin: 4px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 8px; text-align: left; width: 100%; }
+.welcome-list li { padding: 10px 12px; border-radius: 10px; background: rgba(255, 255, 255, 0.025); border: 1px solid var(--line); font-size: 13px; line-height: 1.45; color: var(--muted); }
+.welcome-list b { color: var(--text); font-weight: 600; }
+.welcome-actions { position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
+.welcome-skip { position: relative; margin-top: 4px; background: none; border: 0; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; }
+.welcome-skip:hover { color: var(--text); }
+@keyframes welcome-pop { from { opacity: 0; transform: scale(0.85) translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .welcome-gift { animation: none; } }
+
+.cashout-lock { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; border-color: rgba(255, 196, 0, 0.45); }
+.cashout-lock .btn { margin-left: auto; }
+

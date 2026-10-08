@@ -15,7 +15,7 @@ const STEPS = [
 
 export function Match() {
   const { id } = useParams();
-  const { me, setMe, setAuth, toast, refreshMe } = useApp();
+  const { me, setMe, setAuth, toast, refreshMe, setChatOpen } = useApp();
   const [match, setMatch] = useState(null);
   const [error, setError] = useState('');
   const navigate = useNavigate();
@@ -30,6 +30,11 @@ export function Match() {
     if (watch.current == null) watch.current = next.status === 'done' ? 'history' : 'live';
     setMatch(next);
   }
+
+  const inLobby = !!me && !!match && match.status !== 'done' && (match.host?.id === me.id || match.guest?.id === me.id);
+  useEffect(() => {
+    if (inLobby) setChatOpen(false);
+  }, [inLobby, id, setChatOpen]);
 
   async function load() {
     try {
@@ -118,8 +123,7 @@ function Listing({ match, me, act, id, toast, setAuth }) {
         <div className="pills">
           <span>{match.platform === 'All' ? 'All platform' : match.platform}</span>
           <span>{match.region} region</span>
-          <span>Kill Race team size</span>
-          <span>{match.firstTo} first to</span>
+          <span>1v1</span>
         </div>
         <ol className="stepper">
           {STEPS.map(([key, label], index) => (
@@ -131,6 +135,7 @@ function Listing({ match, me, act, id, toast, setAuth }) {
         </ol>
       </div>
 
+      <div className="lobby-row">
       <div className="lobby-grid">
         <Seat side="host" user={match.host} ready={match.hostReady} you={youHost} label="Host" winnerId={match.winnerId} settled={phase === 'completed' || match.status === 'done'} />
         <section className="lobby-center">
@@ -204,10 +209,42 @@ function Listing({ match, me, act, id, toast, setAuth }) {
           onJoin={!youIn && match.status === 'open' ? () => act(`/api/matches/${id}/join`, {}, 'You are in the lobby.') : null}
         />
       </div>
+      <LobbyRules />
+      </div>
 
       <Room match={match} me={me} youIn={youIn} setAuth={setAuth} />
       {match.status === 'cancelled' && <p className="muted">This listing expired or was cancelled. <Link to="/play">Back to listings.</Link></p>}
     </div>
+  );
+}
+
+const RULES = [
+  ['Same project', 'Make sure you are both playing the right project together. More projects are coming.'],
+  ['No cheating', 'No ESP, aimbot, or any unfair advantage, and no playing a second match at the same time.'],
+  ['Screen record', 'Record your entire screen from readying up until you die or win. If you cannot, make sure replays are on.'],
+  ['Respect', 'Do not slander your opponent.'],
+  ['Have fun', 'Show them who is boss.'],
+];
+
+function LobbyRules() {
+  return (
+    <aside className="lobby-rules">
+      <header>
+        <span>Match rules</span>
+        <small>Read before you ready up</small>
+      </header>
+      <ol>
+        {RULES.map(([title, text], index) => (
+          <li key={title}>
+            <b className="rule-no">{index + 1}</b>
+            <div>
+              <strong>{title}</strong>
+              <p>{text}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </aside>
   );
 }
 
@@ -298,7 +335,7 @@ function Report({ match, me, toast, onPick, onReview }) {
   const s = Math.floor((left % 60000) / 1000);
   return (
     <div className="report">
-      {match.report?.conflict && !votesOpen && <p className="error">Those reports do not match. Upload both clips and the vote reopens.</p>}
+      {match.report?.conflict && !votesOpen && <p className="error">Those reports do not match. Once both players upload a clip, the vote reopens.</p>}
       {match.report?.conflict && bothClips && !votesOpen && unlockAt > 0 && (
         <p className="muted">Votes unlock in {m}:{String(s).padStart(2, '0')}.</p>
       )}
@@ -391,7 +428,7 @@ function Clips({ match, toast }) {
 
   return (
     <section className="clips">
-      <p>Reports disagree. Both players can submit gameplay. MP4, up to 3GB. Send for review is available now.</p>
+      <p>Reports disagree. Upload your screen recording as an MP4, up to 3GB. Send for review is available now.</p>
       <ClipRow label={match.host?.username || 'Host'} clip={match.clips?.host} src={clipSrc('host')} />
       <ClipRow label={match.guest?.username || 'Guest'} clip={match.clips?.guest} src={clipSrc('guest')} />
       <label className={`btn ghost ${busy ? 'wait' : ''}`}>
@@ -449,7 +486,6 @@ function Done({ match, me, onRematch, onDecline }) {
 }
 
 function Room({ match, me, youIn, setAuth }) {
-  const [tab, setTab] = useState('chat');
   const [rows, setRows] = useState(match.messages || []);
   const [text, setText] = useState('');
   const box = useRef(null);
@@ -497,16 +533,11 @@ function Room({ match, me, youIn, setAuth }) {
     <section className="room">
       <header>
         <div className="room-tabs">
-          <button type="button" className={tab === 'chat' ? 'on' : ''} onClick={() => setTab('chat')}>Chat</button>
-          <button type="button" className={tab === 'rules' ? 'on' : ''} onClick={() => setTab('rules')}>Rules</button>
+          <button type="button" className="on">Match chat</button>
         </div>
-        {tab === 'chat' && <p>{youIn ? 'Only you and the other player can read this.' : 'Join the listing to talk.'}</p>}
+        <p>{youIn ? 'Only you and the other player can read this.' : 'Join the listing to talk.'}</p>
       </header>
-      {tab === 'rules' ? (
-        <div className="rules-copy">
-          <p>Both players must record their full screen from the moment they are in the lobby until the point they die or win the game.</p>
-        </div>
-      ) : (
+      {(
         <>
           <div className="room-log" ref={box}>
             {rows.map((row) => (

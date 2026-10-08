@@ -170,7 +170,7 @@ export function Shell({ children }) {
           </button>
         )}
         </div>
-        <div className="content">{children}<Footer /></div>
+        <div className={`content ${pathname.startsWith('/match/') ? 'wide' : ''}`}>{children}<Footer /></div>
       </div>
       <div className="chat-slot">
         {withSomeone ? <LobbyGuide /> : <Chat />}
@@ -190,7 +190,8 @@ export function Shell({ children }) {
             setMe(user);
             setAuth(null);
             await refreshMe();
-            toast(auth === 'up' ? 'Vault open.' : `Welcome back, ${user.username}`);
+            if (auth === 'up') window.dispatchEvent(new CustomEvent('ogv:welcome', { detail: { name: user.username } }));
+            else toast(`Welcome back, ${user.username}`);
           }}
         />
       )}

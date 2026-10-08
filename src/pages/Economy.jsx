@@ -374,11 +374,21 @@ export function Wallet() {
   const [tipAmount, setTipAmount] = useState('');
   const [tipName, setTipName] = useState('');
   const [buying, setBuying] = useState(false);
+  const [cashout, setCashout] = useState(null);
+  const locked = cashout && !cashout.unlocked;
+  const lockNote = locked && (
+    <p className="callout cashout-lock">
+      Tokens won from free Vault Points play can be used in matches, but cashing out unlocks once your account has deposited at least <strong><Amount value={cashout.required} /></strong> in total.
+      You have deposited <strong><Amount value={cashout.deposited} /></strong> so far.
+      <button className="btn sm" type="button" onClick={() => openTab('deposit')}>Deposit</button>
+    </p>
+  );
 
   function apply(data) {
     setMe(data.user);
     setTxs(data.txs || []);
     setWithdrawals(data.withdrawals || []);
+    if (data.cashout) setCashout(data.cashout);
   }
 
   async function load() {
@@ -484,6 +494,7 @@ export function Wallet() {
             </div>
             <p>Minimum withdrawal is 15. A 2.5 fee is taken from that amount. Withdrawals take 24 hours.</p>
           </div>
+          {lockNote}
           <form className="stack" onSubmit={async (event) => {
             event.preventDefault();
             try {
@@ -555,7 +566,7 @@ export function Wallet() {
               I want to receive an email notification when the withdrawal is processed.
             </label>
             <p className="receive">Fee <strong>{gbp(withdrawFee)}</strong> · You receive <strong>{gbp(withdrawReceive)}</strong></p>
-            <button className="btn" type="submit">Withdraw</button>
+            <button className="btn" type="submit" disabled={locked}>Withdraw</button>
           </form>
           {!!withdrawals.length && (
             <div className="pending-list">
@@ -581,6 +592,7 @@ export function Wallet() {
             </div>
           </div>
           <p className="callout">VIP players send tips fee-free. A 20% fee applies for non-VIP users.</p>
+          {lockNote}
           <form className="stack" onSubmit={async (event) => {
             event.preventDefault();
             try {
@@ -605,7 +617,7 @@ export function Wallet() {
             <p className="receive">
               Fee <Amount value={tipFee} /> · You pay <Amount value={tipTotal} /> · They receive <Amount value={tipValue} />
             </p>
-            <button className="btn" type="submit">Tip user</button>
+            <button className="btn" type="submit" disabled={locked}>Tip user</button>
           </form>
         </section>
       )}

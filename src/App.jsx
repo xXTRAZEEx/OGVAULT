@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api, onWs, setToken } from './api';
 import { Shell } from './shell';
-import { VpnNotice, WebsiteDown } from './ui';
+import { VpnNotice, WebsiteDown, WelcomeNotice } from './ui';
 import { Home } from './pages/Home';
 import { Play } from './pages/Play';
 import { Match } from './pages/Match';
@@ -84,7 +84,8 @@ export default function App() {
         setAuth('in');
         return;
       }
-      toast(isNew ? 'Vault open.' : `Welcome back, ${user.discordName || user.username}`);
+      if (isNew) window.dispatchEvent(new CustomEvent('ogv:welcome', { detail: { name: user.discordName || user.username } }));
+      else toast(`Welcome back, ${user.discordName || user.username}`);
     });
   }, [refreshMe, toast]);
 
@@ -122,6 +123,7 @@ export default function App() {
   return (
     <Ctx.Provider value={{ me, setMe, activeMatchId, ready, toast, auth, setAuth, chatOpen, setChatOpen, rev, refreshMe, news, setNews, signOut, toasts }}>
       <VpnNotice />
+      <WelcomeNotice />
       <Shell>
         <PageEnter>
         <Routes>

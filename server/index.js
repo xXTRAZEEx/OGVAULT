@@ -596,6 +596,7 @@ app.post(
         stats: { earned: 0, wins: 0, losses: 0, matches: 0, streak: 0, bestStreak: 0, bestScore: 0 },
       };
       state.users.push(user);
+      creditPoints(state, user, WELCOME_POINTS, 'welcome');
       if (referral) {
         const host = state.users.find((item) => item.referral.toLowerCase() === referral.toLowerCase() && item.id !== user.id);
         if (host) {
@@ -633,6 +634,8 @@ app.post(
     res.json(result);
   })
 );
+
+const WELCOME_POINTS = 5;
 
 function vaultNameFromDiscord(state, discordUsername) {
   let base = String(discordUsername || '').replace(/[^a-zA-Z0-9]/g, '');
@@ -689,6 +692,7 @@ function acceptDiscord(state, profile, ip) {
       discordGlobalName: profile.globalName,
     };
     state.users.push(user);
+    creditPoints(state, user, WELCOME_POINTS, 'welcome');
   }
   if (user.banUntil > Date.now()) return { banned: true };
   claimIp(state, ip, user);
