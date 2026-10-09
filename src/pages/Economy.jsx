@@ -4,6 +4,7 @@ import { api } from '../api';
 import { useApp } from '../App';
 import { ago, format, formatDate, useNow } from '../format';
 import { Amount, FrameFx, PageHead, Points, Select, Token } from '../ui';
+import { confetti, sfx } from '../fx';
 
 const TX = {
   welcome: 'Welcome',
@@ -30,6 +31,11 @@ const PORTRAITS = {
   'avatar-heat': 'Heat portrait',
   'avatar-frost': 'Frost portrait',
   'avatar-gold': 'Gold portrait',
+  'avatar-neon': 'Neon portrait',
+  'avatar-toxic': 'Toxic portrait',
+  'avatar-prism': 'Prism portrait',
+  'avatar-blood': 'Blood Moon portrait',
+  'avatar-galaxy': 'Galaxy portrait',
 };
 const MARKS = {
   'avatar-retrac': 'Retrac',
@@ -39,7 +45,22 @@ const MARK_ART = {
   'avatar-retrac': '/styles/retrac.png',
   'avatar-eon': '/styles/eon.png',
 };
-const COLORS = { blue: 'Blue name', gold: 'Gold name' };
+const COLORS = { blue: 'Blue name', gold: 'Gold name', crimson: 'Crimson name', emerald: 'Emerald name', violet: 'Violet name', ice: 'Ice name', inferno: 'Inferno name', rainbow: 'Rainbow name', sunset: 'Sunset name', ocean: 'Ocean name', chrome: 'Chrome name' };
+const SHOP_SECTIONS = [
+  { id: 'perks', title: 'Perks', text: 'Membership and match tools.' },
+  { id: 'portraits', title: 'Portraits', text: 'A ring around your picture on your profile, in chat and on listings.' },
+  { id: 'marks', title: 'Name marks', text: 'A small project badge beside your name.' },
+  { id: 'colors', title: 'Name colours', text: 'Change how your name looks everywhere on the site.' },
+];
+const RARE_PRICE = 6;
+
+function sectionOf(item) {
+  if (MARKS[item.id]) return 'marks';
+  if (item.id.startsWith('avatar-')) return 'portraits';
+  if (item.id.startsWith('color-')) return 'colors';
+  return 'perks';
+}
+const colorOf = (itemId) => (itemId.startsWith('color-') && COLORS[itemId.slice(6)] ? itemId.slice(6) : '');
 
 function shopBlurb(item) {
   if (SHOP_COPY[item.id]) return SHOP_COPY[item.id];
@@ -96,16 +117,14 @@ function ownsItem(me, item) {
   if (item.id === 'vip') return !!(me.vip && me.vipUntil > Date.now());
   if (MARKS[item.id]) return (me.ownedMarks || []).includes(item.id);
   if (item.id.startsWith('avatar-')) return (me.ownedAvatars || []).includes(item.id);
-  if (item.id === 'color-blue') return (me.ownedColors || []).includes('blue');
-  if (item.id === 'color-gold') return (me.ownedColors || []).includes('gold');
+  if (colorOf(item.id)) return (me.ownedColors || []).includes(colorOf(item.id));
   return false;
 }
 
 function slotOf(item) {
   if (MARKS[item.id]) return { slot: 'mark', id: item.id, equipped: (me) => me?.chatIcon === item.id };
   if (item.id.startsWith('avatar-')) return { slot: 'avatar', id: item.id, equipped: (me) => me?.avatar === item.id };
-  if (item.id === 'color-blue') return { slot: 'color', id: 'blue', equipped: (me) => me?.nameColor === 'blue' };
-  if (item.id === 'color-gold') return { slot: 'color', id: 'gold', equipped: (me) => me?.nameColor === 'gold' };
+  if (colorOf(item.id)) return { slot: 'color', id: colorOf(item.id), equipped: (me) => me?.nameColor === colorOf(item.id) };
   return null;
 }
 
@@ -161,10 +180,10 @@ function ShopPreview({ id }) {
       </div>
     );
   }
-  if (id === 'color-blue' || id === 'color-gold') {
+  if (colorOf(id)) {
     return (
       <div className="shop-preview" aria-hidden="true">
-        <span className={`shop-name ${id === 'color-gold' ? 'c-gold' : 'c-blue'}`}>Player</span>
+        <span className={`shop-name c-${colorOf(id)}`}>Player</span>
       </div>
     );
   }
@@ -212,15 +231,28 @@ export function Shop() {
           </div>
         ))}
       </section>
+      {SHOP_SECTIONS.map((section) => {
+        const items = shop.filter((item) => sectionOf(item) === section.id);
+        if (!items.length) return null;
+        if (section.id !== 'perks') items.sort((a, b) => a.price - b.price);
+        return (
+          <section className="shop-section" key={section.id}>
+            <div className="shop-section-head">
+              <h2>{section.title}</h2>
+              <p>{section.text}</p>
+              <span className="shop-count">{items.length}</span>
+            </div>
       <div className="shop-grid">
-        {shop.map((item) => {
+        {items.map((item) => {
           const cosmetic = slotOf(item);
           const bought = ownsItem(me, item);
           const equipped = cosmetic ? cosmetic.equipped(me) : false;
           return (
             <article key={item.id} className="panel item">
               <ShopPreview id={item.id} />
-              <span className="tag">{item.tag}</span>
+              <span className={`tag ${item.price >= RARE_PRICE && section.id !== 'perks' ? 'rare' : ''}`}>
+                {item.price >= RARE_PRICE && section.id !== 'perks' ? 'Rare' : item.tag}
+              </span>
               <h2>{item.name}</h2>
               <p>{shopBlurb(item)}</p>
               {bought && cosmetic && equipped && (
@@ -252,6 +284,9 @@ export function Shop() {
           );
         })}
       </div>
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -657,6 +692,8 @@ export function Rewards() {
               const data = await api('/api/rewards/daily', { method: 'POST', body: {} });
               setMe(data.user);
               toast(`+${data.amount} tokens and +${data.points || 0} Vault Points`);
+              sfx.coin();
+              confetti(40);
             } catch (err) { toast(err.message, 'bad'); }
           }}>{left ? `Ready in ${left}` : 'Claim daily'}</button>
         </article>

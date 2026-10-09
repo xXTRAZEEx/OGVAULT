@@ -127,6 +127,11 @@ const PALETTES = {
   'avatar-heat': ['#3a160f', '#ff6a3d'],
   'avatar-frost': ['#102636', '#7ee0ff'],
   'avatar-gold': ['#3a2d10', '#f5c451'],
+  'avatar-neon': ['#1e1036', '#b26bff'],
+  'avatar-toxic': ['#0f2a12', '#5dff6a'],
+  'avatar-prism': ['#1a1530', '#ff5fd2'],
+  'avatar-blood': ['#2a0608', '#d1132a'],
+  'avatar-galaxy': ['#0d0b2a', '#6b5bff'],
 };
 
 const NAME_MARKS = {
@@ -138,6 +143,11 @@ function portraitRing(avatar) {
   if (avatar === 'avatar-heat') return 'ring-heat';
   if (avatar === 'avatar-frost') return 'ring-frost';
   if (avatar === 'avatar-gold') return 'ring-gold';
+  if (avatar === 'avatar-neon') return 'ring-neon';
+  if (avatar === 'avatar-toxic') return 'ring-toxic';
+  if (avatar === 'avatar-prism') return 'ring-prism';
+  if (avatar === 'avatar-blood') return 'ring-blood';
+  if (avatar === 'avatar-galaxy') return 'ring-galaxy';
   return '';
 }
 

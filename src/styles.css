@@ -1494,3 +1494,90 @@ label .have { float: right; font-weight: 500; font-size: 12px; display: inline-f
 .launch-live { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.45); }
 .launch-live .dot { width: 8px; height: 8px; border-radius: 50%; background: #2ecc71; box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.6); animation: launch-pulse 1.6s infinite; }
 @keyframes launch-pulse { 70% { box-shadow: 0 0 0 8px rgba(46, 204, 113, 0); } 100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); } }
+
+/* premium fx */
+.sound-toggle svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.sound-toggle { color: var(--muted); }
+.sound-toggle.on { color: var(--text); }
+
+
+.vault-art::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.85) 50%, transparent 65%) no-repeat;
+  background-size: 250% 100%; background-position: 150% 0;
+  -webkit-mask: url(/logo.png) center / 100% 100% no-repeat; mask: url(/logo.png) center / 100% 100% no-repeat luminance;
+  mix-blend-mode: overlay; animation: logo-shine 6s ease-in-out 1.5s infinite; }
+@keyframes logo-shine { 0% { background-position: 150% 0; } 35%, 100% { background-position: -60% 0; } }
+
+.btn { position: relative; overflow: hidden; isolation: isolate; }
+.btn:not(.ghost):not(:disabled)::after { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, 0.28) 50%, transparent 70%) no-repeat;
+  background-size: 250% 100%; background-position: 160% 0; transition: background-position 0s; }
+.btn:not(.ghost):not(:disabled):hover::after { background-position: -60% 0; transition: background-position 700ms var(--ease-out); }
+.btn:not(.ghost):not(:disabled):hover { box-shadow: 0 6px 22px rgba(47, 107, 255, 0.35); }
+.fx-ripple { position: absolute; border-radius: 50%; background: rgba(255, 255, 255, 0.35); transform: scale(0); pointer-events: none; animation: fx-ripple 600ms ease-out forwards; }
+@keyframes fx-ripple { to { transform: scale(1); opacity: 0; } }
+
+.count-glow { display: inline-block; animation: count-glow 1.2s ease-out; }
+@keyframes count-glow { 0% { color: #ffe9a3; text-shadow: 0 0 14px rgba(245, 197, 66, 0.9); transform: scale(1.12); } 100% { text-shadow: none; transform: none; } }
+
+.fx-confetti { position: fixed; inset: 0; z-index: 9999; pointer-events: none; overflow: hidden; }
+.fx-confetti i { position: absolute; top: -14px; width: 8px; height: 13px; border-radius: 2px; animation-name: fx-fall; animation-timing-function: cubic-bezier(0.25, 0.4, 0.5, 1); animation-fill-mode: forwards; }
+@keyframes fx-fall { to { transform: translate(var(--x), 105vh) rotate(var(--r)); opacity: 0.9; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .vault-art::after, .count-glow { animation: none; }
+}
+.count-num { font-style: normal; }
+
+/* extra shop styles */
+.avatar.ring-neon, .shop-ava.ring-neon { box-shadow: 0 0 0 3px #07080d, 0 0 0 5px #b26bff, 0 0 14px 4px rgba(178, 107, 255, 0.55); animation: ring-neon 2.2s ease-in-out infinite; }
+@keyframes ring-neon { 50% { box-shadow: 0 0 0 3px #07080d, 0 0 0 5px #d3a8ff, 0 0 22px 7px rgba(178, 107, 255, 0.8); } }
+.avatar.ring-toxic, .shop-ava.ring-toxic { box-shadow: 0 0 0 3px #07080d, 0 0 0 5px #5dff6a, 0 0 12px 3px rgba(93, 255, 106, 0.45); animation: ring-toxic 1.4s steps(2, jump-none) infinite; }
+@keyframes ring-toxic { 50% { box-shadow: 0 0 0 3px #07080d, 0 0 0 5px #b6ff3d, 0 0 18px 5px rgba(182, 255, 61, 0.6); } }
+.avatar.ring-prism, .shop-ava.ring-prism { box-shadow: none; isolation: isolate; }
+.avatar.ring-prism::before, .shop-ava.ring-prism::before { content: ''; position: absolute; inset: -5px; z-index: -1; border-radius: 50%;
+  background: conic-gradient(#ff5f6d, #ffc371, #f5ff6b, #5dff9b, #5fd2ff, #8f6bff, #ff5fd2, #ff5f6d);
+  -webkit-mask: radial-gradient(circle, transparent calc(50% - 2px), #000 calc(50% - 1px)); mask: radial-gradient(circle, transparent calc(50% - 2px), #000 calc(50% - 1px));
+  animation: ring-prism 3s linear infinite; }
+@keyframes ring-prism { to { rotate: 360deg; } }
+
+.c-crimson { color: #ff4d5e; }
+.c-emerald { color: #3ee08f; }
+.c-violet { color: #b98bff; }
+.c-ice, .c-inferno, .c-rainbow { background-size: 200% auto; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; animation: name-flow 3s linear infinite; }
+.c-ice { background-image: linear-gradient(90deg, #9fe8ff, #ffffff, #6cc8ff, #ffffff, #9fe8ff); }
+.c-inferno { background-image: linear-gradient(90deg, #ff3d00, #ffb300, #ff6a00, #ffe066, #ff3d00); animation-duration: 1.8s; }
+.c-rainbow { background-image: linear-gradient(90deg, #ff5f6d, #ffc371, #5dff9b, #5fd2ff, #b26bff, #ff5fd2, #ff5f6d); }
+@keyframes name-flow { to { background-position: 200% center; } }
+.uname.c-crimson em, .uname.c-emerald em, .uname.c-violet em, .uname.c-ice em, .uname.c-inferno em, .uname.c-rainbow em { background: none; -webkit-text-fill-color: var(--gold); color: var(--gold); }
+@media (prefers-reduced-motion: reduce) {
+  .avatar.ring-neon, .shop-ava.ring-neon, .avatar.ring-toxic, .shop-ava.ring-toxic, .avatar.ring-prism::before, .shop-ava.ring-prism::before, .c-ice, .c-inferno, .c-rainbow { animation: none; }
+}
+.avatar.ring-prism::before, .shop-ava.ring-prism::before { inset: -5px;
+  background: conic-gradient(from 0deg, #ff6b8b, #ffb86b, #ffe66b, #6bffb8, #6bd5ff, #9a7bff, #ff6bd8, #ff6b8b);
+  -webkit-mask: radial-gradient(closest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px)); mask: radial-gradient(closest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px));
+  filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.35)); animation-duration: 6s; }
+
+.avatar.ring-blood, .shop-ava.ring-blood { box-shadow: 0 0 0 3px #07080d, 0 0 0 5px #d1132a, 0 0 10px 2px rgba(209, 19, 42, 0.45); animation: ring-blood 1.2s ease-in-out infinite; }
+@keyframes ring-blood { 0%, 40%, 100% { box-shadow: 0 0 0 3px #07080d, 0 0 0 5px #d1132a, 0 0 10px 2px rgba(209, 19, 42, 0.45); } 15% { box-shadow: 0 0 0 3px #07080d, 0 0 0 5px #ff3b4f, 0 0 20px 6px rgba(255, 59, 79, 0.7); } 28% { box-shadow: 0 0 0 3px #07080d, 0 0 0 5px #e01f35, 0 0 14px 3px rgba(224, 31, 53, 0.55); } }
+.avatar.ring-galaxy, .shop-ava.ring-galaxy { box-shadow: 0 0 14px 2px rgba(107, 91, 255, 0.4); isolation: isolate; }
+.avatar.ring-galaxy::before, .shop-ava.ring-galaxy::before { content: ''; position: absolute; inset: -5px; z-index: -1; border-radius: 50%;
+  background: conic-gradient(from 0deg, #2a1b6b, #6b5bff, #c38bff, #3fd0ff, #1b2a6b, #6b5bff, #ff8bf0, #2a1b6b);
+  -webkit-mask: radial-gradient(closest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px)); mask: radial-gradient(closest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
+  animation: ring-prism 9s linear infinite reverse; }
+
+.c-sunset, .c-ocean, .c-chrome { -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.c-sunset { background-image: linear-gradient(90deg, #ffb347, #ff6f61, #ff5fa2); }
+.c-ocean { background-image: linear-gradient(90deg, #3fe0d0, #3fa8ff, #4a5bff); }
+.c-chrome { background-image: linear-gradient(100deg, #8a93a3 20%, #ffffff 45%, #c9ced6 55%, #8a93a3 80%); background-size: 250% auto; animation: name-flow 3.5s linear infinite; }
+.uname.c-sunset em, .uname.c-ocean em, .uname.c-chrome em { background: none; -webkit-text-fill-color: var(--gold); color: var(--gold); }
+
+.shop-section { display: flex; flex-direction: column; gap: 14px; }
+.shop-section-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.shop-section-head h2 { font-size: 20px; }
+.shop-section-head p { margin: 0; color: var(--muted); font-size: 13px; flex: 1; }
+.shop-count { font-size: 12px; font-weight: 700; color: var(--muted); padding: 2px 9px; border-radius: 99px; border: 1px solid var(--line); }
+.tag.rare { background: linear-gradient(90deg, rgba(255, 95, 210, 0.2), rgba(95, 210, 255, 0.2)); color: #ffd2f4; border-color: rgba(255, 95, 210, 0.4); }
+@media (prefers-reduced-motion: reduce) {
+  .avatar.ring-blood, .shop-ava.ring-blood, .avatar.ring-galaxy::before, .shop-ava.ring-galaxy::before, .c-chrome { animation: none; }
+}

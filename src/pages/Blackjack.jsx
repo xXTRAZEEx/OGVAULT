@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { useApp } from '../App';
 import { PageHead, PointIcon, Token } from '../ui';
+import { celebrate, sfx } from '../fx';
 
 const SUIT = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const DEAL_MS = 340;
@@ -78,6 +79,12 @@ function cardTotal(cards) {
     aces -= 1;
   }
   return total;
+}
+
+function resultFx(hand) {
+  if (hand.outcome === 'blackjack') celebrate();
+  else if (hand.outcome === 'win') sfx.coin();
+  else if (hand.outcome === 'lose') sfx.lose();
 }
 
 function outcomeText(hand) {
@@ -214,7 +221,10 @@ export function Blackjack() {
       shownRef.current = done;
       setHand(done);
       setBusy(false);
-      if (done.showResult) toast(outcomeText(done));
+      if (done.showResult) {
+        toast(outcomeText(done));
+        resultFx(done);
+      }
       return;
     }
     setBusy(true);
@@ -224,7 +234,10 @@ export function Blackjack() {
         setHand(step);
         if (index === sequence.length - 1) {
           setBusy(false);
-          if (step.showResult) toast(outcomeText(step));
+          if (step.showResult) {
+            toast(outcomeText(step));
+            resultFx(step);
+          }
         }
       }, DEAL_MS * index);
       timers.current.push(id);

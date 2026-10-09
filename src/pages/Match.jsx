@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, apiUrl, onWs, sendWs } from '../api';
 import { useApp } from '../App';
 import { formatDate, useNow } from '../format';
+import { celebrate, sfx } from '../fx';
 import { Amount, Avatar, Modal, Name, Stake } from '../ui';
 
 const STEPS = [
@@ -35,6 +36,14 @@ export function Match() {
   useEffect(() => {
     if (inLobby) setChatOpen(false);
   }, [inLobby, id, setChatOpen]);
+
+  const guestId = match?.guest?.id || '';
+  const seenGuest = useRef(null);
+  useEffect(() => {
+    if (!match) return;
+    if (seenGuest.current === '' && guestId && match.host?.id === me?.id) sfx.found();
+    seenGuest.current = guestId;
+  }, [guestId, !!match]);
 
   async function load() {
     try {
@@ -459,6 +468,13 @@ function Done({ match, me, onRematch, onDecline }) {
   const winner = [match.host, match.guest].find((user) => user?.id === match.winnerId);
   const other = me?.id === match.host?.id ? match.guest : match.host;
   const ask = match.rematch;
+  useEffect(() => {
+    const key = `ogv:fx:${match.id}`;
+    if (sessionStorage.getItem(key) || !me) return;
+    sessionStorage.setItem(key, '1');
+    if (won) celebrate();
+    else if (!tie && winner) sfx.lose();
+  }, [match.id]);
   const waiting = ask?.fromId && ask.fromId === me?.id;
   const incoming = ask?.fromId && ask.fromId !== me?.id;
   return (

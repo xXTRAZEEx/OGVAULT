@@ -614,9 +614,10 @@ export function goLive(match) {
   if (match.guestId) match.scores[match.guestId] = 0;
 }
 
-const PORTRAIT_IDS = ['avatar-heat', 'avatar-frost', 'avatar-gold'];
+const PORTRAIT_IDS = ['avatar-heat', 'avatar-frost', 'avatar-gold', 'avatar-neon', 'avatar-toxic', 'avatar-prism', 'avatar-blood', 'avatar-galaxy'];
 const MARK_IDS = ['avatar-retrac', 'avatar-eon'];
-const COLOR_IDS = { 'color-blue': 'blue', 'color-gold': 'gold' };
+const COLOR_IDS = Object.fromEntries(['blue', 'gold', 'crimson', 'emerald', 'violet', 'ice', 'inferno', 'rainbow', 'sunset', 'ocean', 'chrome'].map((id) => [`color-${id}`, id]));
+const isColorKey = (key) => Object.values(COLOR_IDS).includes(key);
 
 function pushUnique(list, value) {
   if (value && !list.includes(value)) list.push(value);
@@ -656,8 +657,7 @@ export function ensureCosmetics(user) {
   if (!user.chatIcon || user.chatIcon === 'flame' || user.chatIcon === 'crown' || !MARK_IDS.includes(user.chatIcon)) {
     user.chatIcon = 'none';
   }
-  if (user.nameColor === 'blue' && !shopRevoked(user, 'color-blue')) pushUnique(user.ownedColors, 'blue');
-  if (user.nameColor === 'gold' && !shopRevoked(user, 'color-gold')) pushUnique(user.ownedColors, 'gold');
+  if (isColorKey(user.nameColor) && !shopRevoked(user, `color-${user.nameColor}`)) pushUnique(user.ownedColors, user.nameColor);
 }
 
 export function buyItem(state, user, itemId) {
@@ -713,12 +713,17 @@ const PORTRAIT_NAMES = {
   'avatar-heat': 'Heat portrait',
   'avatar-frost': 'Frost portrait',
   'avatar-gold': 'Gold portrait',
+  'avatar-neon': 'Neon portrait',
+  'avatar-toxic': 'Toxic portrait',
+  'avatar-prism': 'Prism portrait',
+  'avatar-blood': 'Blood Moon portrait',
+  'avatar-galaxy': 'Galaxy portrait',
 };
 const MARK_NAMES = {
   'avatar-retrac': 'Retrac',
   'avatar-eon': 'Eon',
 };
-const COLOR_NAMES = { blue: 'Blue name', gold: 'Gold name' };
+const COLOR_NAMES = { blue: 'Blue name', gold: 'Gold name', crimson: 'Crimson name', emerald: 'Emerald name', violet: 'Violet name', ice: 'Ice name', inferno: 'Inferno name', rainbow: 'Rainbow name', sunset: 'Sunset name', ocean: 'Ocean name', chrome: 'Chrome name' };
 
 export function inventoryItems(user) {
   ensureCosmetics(user);
@@ -786,10 +791,24 @@ export const INVENTORY_GRANTS = [
   { key: 'avatar-heat', label: 'Heat portrait' },
   { key: 'avatar-frost', label: 'Frost portrait' },
   { key: 'avatar-gold', label: 'Gold portrait' },
+  { key: 'avatar-neon', label: 'Neon portrait' },
+  { key: 'avatar-toxic', label: 'Toxic portrait' },
+  { key: 'avatar-prism', label: 'Prism portrait' },
+  { key: 'avatar-blood', label: 'Blood Moon portrait' },
+  { key: 'avatar-galaxy', label: 'Galaxy portrait' },
   { key: 'avatar-retrac', label: 'Retrac' },
   { key: 'avatar-eon', label: 'Eon' },
   { key: 'blue', label: 'Blue name' },
   { key: 'gold', label: 'Gold name' },
+  { key: 'crimson', label: 'Crimson name' },
+  { key: 'emerald', label: 'Emerald name' },
+  { key: 'violet', label: 'Violet name' },
+  { key: 'ice', label: 'Ice name' },
+  { key: 'inferno', label: 'Inferno name' },
+  { key: 'rainbow', label: 'Rainbow name' },
+  { key: 'sunset', label: 'Sunset name' },
+  { key: 'ocean', label: 'Ocean name' },
+  { key: 'chrome', label: 'Chrome name' },
   { key: 'snipes', label: 'Snipe (+5)' },
   { key: 'shield', label: 'Streak shield (+1)' },
   { key: 'vip', label: 'OG VIP (30 days)' },
@@ -802,7 +821,7 @@ export function grantsAvailable(user) {
     if (grant.key === 'vip') return !isVip(user);
     if (PORTRAIT_IDS.includes(grant.key)) return !user.ownedAvatars.includes(grant.key);
     if (MARK_IDS.includes(grant.key)) return !user.ownedMarks.includes(grant.key);
-    if (grant.key === 'blue' || grant.key === 'gold') return !user.ownedColors.includes(grant.key);
+    if (isColorKey(grant.key)) return !user.ownedColors.includes(grant.key);
     return false;
   });
 }
@@ -836,9 +855,9 @@ export function grantInventoryItem(user, key) {
     if (!user.chatIcon || user.chatIcon === 'none') user.chatIcon = key;
     return true;
   }
-  if (key === 'blue' || key === 'gold') {
+  if (isColorKey(key)) {
     if (user.ownedColors.includes(key)) return false;
-    forgetRevoke(user, key === 'blue' ? 'color-blue' : 'color-gold');
+    forgetRevoke(user, `color-${key}`);
     pushUnique(user.ownedColors, key);
     if (!user.nameColor || user.nameColor === 'default') user.nameColor = key;
     return true;
@@ -872,10 +891,10 @@ export function removeInventoryItem(user, key) {
     pushUnique(revokedShop(user), key);
     return;
   }
-  if (key === 'blue' || key === 'gold') {
+  if (isColorKey(key)) {
     user.ownedColors = user.ownedColors.filter((id) => id !== key);
     if (user.nameColor === key) user.nameColor = 'default';
-    pushUnique(revokedShop(user), key === 'blue' ? 'color-blue' : 'color-gold');
+    pushUnique(revokedShop(user), `color-${key}`);
     return;
   }
   fail(400, 'That item is not in this inventory');

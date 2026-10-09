@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useApp } from '../App';
@@ -145,25 +145,34 @@ function CountUp({ value }) {
   const [shown, setShown] = useState(() => (
     window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? target : 0
   ));
+  const [glow, setGlow] = useState(0);
+  const shownRef = useRef(shown);
+  const firstRef = useRef(true);
   useEffect(() => {
+    const first = firstRef.current;
+    firstRef.current = false;
+    if (!first) setGlow((n) => n + 1);
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      shownRef.current = target;
       setShown(target);
       return undefined;
     }
     let frame = 0;
     const start = performance.now();
-    const from = 0;
+    const from = shownRef.current;
     const tick = (now) => {
-      const t = Math.min(1, (now - start) / 1100);
+      const t = Math.min(1, (now - start) / (first ? 1100 : 700));
       const eased = 1 - Math.pow(1 - t, 4);
-      setShown(from + (target - from) * eased);
+      const value = from + (target - from) * eased;
+      shownRef.current = value;
+      setShown(value);
       if (t < 1) frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
   }, [target]);
   const decimals = Number.isInteger(target) ? 0 : 2;
-  return <>{format(Number(shown.toFixed(decimals)))}</>;
+  return <em key={glow} className={`count-num${glow ? ' count-glow' : ''}`}>{format(Number(shown.toFixed(decimals)))}</em>;
 }
 
 function ProfileCard({ me }) {

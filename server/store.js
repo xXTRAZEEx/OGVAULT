@@ -79,6 +79,104 @@ export const SHOP = [
     tag: 'Style',
     blurb: 'Your name renders in gold.',
   },
+  {
+    id: 'avatar-neon',
+    name: 'Neon portrait',
+    price: 4,
+    tag: 'Style',
+    blurb: 'A pulsing violet glow around your portrait.',
+  },
+  {
+    id: 'avatar-toxic',
+    name: 'Toxic portrait',
+    price: 4,
+    tag: 'Style',
+    blurb: 'A radioactive green ring that hums.',
+  },
+  {
+    id: 'avatar-prism',
+    name: 'Prism portrait',
+    price: 7,
+    tag: 'Style',
+    blurb: 'A spinning rainbow ring. Rare.',
+  },
+  {
+    id: 'avatar-blood',
+    name: 'Blood Moon portrait',
+    price: 5,
+    tag: 'Style',
+    blurb: 'A deep red ring that beats like a heart.',
+  },
+  {
+    id: 'avatar-galaxy',
+    name: 'Galaxy portrait',
+    price: 6,
+    tag: 'Style',
+    blurb: 'A swirling cosmic ring of violet and blue.',
+  },
+  {
+    id: 'color-sunset',
+    name: 'Sunset name',
+    price: 3.5,
+    tag: 'Style',
+    blurb: 'A warm orange to pink fade.',
+  },
+  {
+    id: 'color-ocean',
+    name: 'Ocean name',
+    price: 3.5,
+    tag: 'Style',
+    blurb: 'A cool teal to deep blue fade.',
+  },
+  {
+    id: 'color-chrome',
+    name: 'Chrome name',
+    price: 4,
+    tag: 'Style',
+    blurb: 'Polished silver with a moving shine.',
+  },
+  {
+    id: 'color-crimson',
+    name: 'Crimson name',
+    price: 2.5,
+    tag: 'Style',
+    blurb: 'Your name renders in deep red.',
+  },
+  {
+    id: 'color-emerald',
+    name: 'Emerald name',
+    price: 2.5,
+    tag: 'Style',
+    blurb: 'Your name renders in emerald green.',
+  },
+  {
+    id: 'color-violet',
+    name: 'Violet name',
+    price: 2.5,
+    tag: 'Style',
+    blurb: 'Your name renders in royal violet.',
+  },
+  {
+    id: 'color-ice',
+    name: 'Ice name',
+    price: 4,
+    tag: 'Style',
+    blurb: 'A frosty shimmer runs through your name.',
+  },
+  {
+    id: 'color-inferno',
+    name: 'Inferno name',
+    price: 5,
+    tag: 'Style',
+    blurb: 'Your name burns with moving flame.',
+  },
+  {
+    id: 'color-rainbow',
+    name: 'Rainbow name',
+    price: 7,
+    tag: 'Style',
+    blurb: 'An animated rainbow name. Rare.',
+  },
 ];
 
 export function round(n) {
@@ -215,7 +313,7 @@ export function load() {
       const colors = new Set(Array.isArray(user.ownedColors) ? user.ownedColors : []);
       const revoked = new Set(Array.isArray(user.revokedShop) ? user.revokedShop : []);
       const kept = (id) => id && !revoked.has(id);
-      const portraitIds = ['avatar-heat', 'avatar-frost', 'avatar-gold'];
+      const portraitIds = ['avatar-heat', 'avatar-frost', 'avatar-gold', 'avatar-neon', 'avatar-toxic', 'avatar-prism', 'avatar-blood', 'avatar-galaxy'];
       const markIds = ['avatar-retrac', 'avatar-eon'];
       if (kept(user.avatar) && portraitIds.includes(user.avatar)) portraits.add(user.avatar);
       if (markIds.includes(user.avatar)) {
@@ -244,6 +342,7 @@ export function load() {
         if (markIds.includes(item)) marks.add(item);
         if (item === 'color-blue') colors.add('blue');
         if (item === 'color-gold') colors.add('gold');
+        if (typeof item === 'string' && item.startsWith('color-') && item !== 'color-blue' && item !== 'color-gold') colors.add(item.slice(6));
       }
       user.ownedAvatars = [...portraits];
       user.ownedMarks = [...marks];

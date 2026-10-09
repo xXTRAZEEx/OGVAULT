@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { api, apiUrl, onWs, sendWs, setToken } from './api';
 import { useApp } from './App';
 import { ago } from './format';
+import { isMuted, setMuted } from './fx';
 import { Amount, Avatar, Modal, Name, PointIcon, Token, VaultLogo } from './ui';
 
 const NAV = [
@@ -159,6 +160,7 @@ export function Shell({ children }) {
               <button className="btn" onClick={() => setAuth('up')}>Register</button>
             </>
           )}
+          <SoundToggle />
           <button className={`iconbtn chat-toggle ${chatOpen ? 'on' : ''}`} aria-label="Chat" onClick={() => setChatOpen((v) => !v)}>
             <ChatIcon />
           </button>
@@ -571,4 +573,22 @@ function CardIcon() {
   );
 }
 function SearchIcon() { return <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6" /><path d="M16 16l4 4" /></svg>; }
+function SoundToggle() {
+  const [muted, setMutedState] = useState(isMuted);
+  return (
+    <button
+      type="button"
+      className={`iconbtn sound-toggle ${muted ? '' : 'on'}`}
+      aria-label={muted ? 'Turn sound on' : 'Mute sound'}
+      title={muted ? 'Sound off' : 'Sound on'}
+      onClick={() => { setMuted(!muted); setMutedState(!muted); }}
+    >
+      <svg viewBox="0 0 24 24">
+        <path d="M4 9h4l5-4v14l-5-4H4z" />
+        {muted ? <path d="M17 9l5 6M22 9l-5 6" /> : <path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" />}
+      </svg>
+    </button>
+  );
+}
+
 function ChatIcon() { return <svg viewBox="0 0 24 24"><path d="M5 6h14v9H8l-3 3z" /></svg>; }
