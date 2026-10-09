@@ -1384,6 +1384,19 @@ async function handleCommunityButton(interaction) {
   }
   if (id === 'ogvault:verify') {
     const linked = load().users?.find((user) => !user.npc && String(user.discordId || '') === interaction.user.id);
+    if (!linked && load().launchGate?.enabled) {
+      const memberRole = await roleByName(guild, 'Member');
+      if (!memberRole) {
+        await interaction.reply({ content: 'The Member role is missing.', ephemeral: true });
+        return;
+      }
+      await interaction.member.roles.add(memberRole);
+      await interaction.reply({
+        content: 'You are verified. OGVAULT is not live yet, so link your site account here once it opens.',
+        ephemeral: true,
+      });
+      return;
+    }
     if (!linked) {
       await interaction.reply({
         content: 'Sign in with Discord on https://ogvault.co.uk first, then press this again. Registered with an email instead? Press **Link with password**.',
