@@ -28,6 +28,9 @@ import {
   credit,
   debit,
   ensurePotw,
+  joinCup,
+  cupKind,
+  cupKindLabel,
   grantInventoryItem,
   grantsAvailable,
   inventoryItems,
@@ -57,14 +60,18 @@ const commands = [
         .setName('create')
         .setDescription('Open a cup players can join on the site')
         .addStringOption((option) => option.setName('name').setDescription('Cup name').setRequired(true).setMaxLength(80))
-        .addIntegerOption((option) =>
-          option.setName('players').setDescription('Maximum players').setRequired(true).setMinValue(3)
+        .addStringOption((option) =>
+          option.setName('type').setDescription('Kill Race or Scrim').setRequired(true)
+            .addChoices({ name: 'Kill Race', value: 'killrace' }, { name: 'Scrim', value: 'scrim' })
         )
+        .addNumberOption((option) => option.setName('hours').setDescription('How long the tournament stays open').setRequired(true).setMinValue(0.01))
         .addNumberOption((option) => option.setName('entry').setDescription('Entry fee in tokens').setRequired(true).setMinValue(0))
-        .addNumberOption((option) => option.setName('hours').setDescription('How long the cup stays open').setRequired(true).setMinValue(0.01))
         .addNumberOption((option) => option.setName('first').setDescription('1st place prize in tokens').setRequired(true).setMinValue(0))
         .addNumberOption((option) => option.setName('second').setDescription('2nd place prize in tokens').setRequired(true).setMinValue(0))
         .addNumberOption((option) => option.setName('third').setDescription('3rd place prize in tokens').setRequired(true).setMinValue(0))
+        .addIntegerOption((option) =>
+          option.setName('players').setDescription('Maximum players (default 32)').setRequired(false).setMinValue(3)
+        )
     ),
   adminOnly(new SlashCommandBuilder()
     .setName('purge')
@@ -421,7 +428,8 @@ function clearSessions(state, userId) {
 
 function createTournament(options) {
   const name = String(options.getString('name') || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80);
-  const players = options.getInteger('players');
+  const kind = options.getString('type') === 'scrim' ? 'scrim' : 'killrace';
+  const players = options.getInteger('players') || 32;
   const entry = money(options.getNumber('entry'));
   const length = hours(options.getNumber('hours'));
   const places = [money(options.getNumber('first')), money(options.getNumber('second')), money(options.getNumber('third'))];
@@ -432,7 +440,8 @@ function createTournament(options) {
     const cup = {
       id: rid('cup'),
       name,
-      blurb: `Up to ${players} players. Entry ${entry}. Prizes ${places.join(' / ')} for 1st, 2nd, and 3rd.`,
+      kind,
+      blurb: `${cupKindLabel(kind)}. Up to ${players} players. Entry ${entry}. Prizes ${places.join(' / ')} for 1st, 2nd, and 3rd.`,
       entry,
       prize: round(places[0] + places[1] + places[2]),
       places,
@@ -444,6 +453,134 @@ function createTournament(options) {
     state.tournaments.unshift(cup);
     return cup;
   });
+}
+
+const SITE = 'https://ogvault.co.uk';
+
+async function ensureTournamentsChannel(guild) {
+  const channels = await guild.channels.fetch();
+  const news = channels.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === 'News');
+  const existing = channels.find((channel) => channel.type === ChannelType.GuildText && channel.name === 'tournaments');
+  const roles = await guild.roles.fetch();
+  const owner = roles.find((role) => role.name === 'Owner');
+  const member = roles.find((role) => role.name === 'Member');
+  const overwrites = [
+    { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+    { id: guild.members.me.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] },
+    ...(member ? [{ id: member.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] }] : []),
+    ...(owner ? [{ id: owner.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] }] : []),
+  ];
+  if (existing) {
+    await existing.permissionOverwrites.set(overwrites).catch(() => {});
+    if (news && existing.parentId !== news.id) await existing.setParent(news.id, { lockPermissions: false }).catch(() => {});
+    return existing;
+  }
+  return guild.channels.create({
+    name: 'tournaments',
+    type: ChannelType.GuildText,
+    parent: news?.id,
+    topic: 'Live OGVAULT cups. Press Register to join.',
+    permissionOverwrites: overwrites,
+  });
+}
+
+function tournamentEmbed(cup) {
+  const kind = cupKind(cup);
+  const open = !cup.paidOut && Date.now() < cup.endsAt;
+  const places = Array.isArray(cup.places) ? cup.places : [];
+  const prize = (index, label) => (places[index] != null ? `**${label}**  ${places[index]} tokens` : null);
+  const fields = [
+    { name: 'Type', value: cupKindLabel(kind), inline: true },
+    { name: 'Entry', value: cup.entry > 0 ? `${cup.entry} tokens` : 'Free', inline: true },
+    { name: 'Players', value: cup.maxPlayers ? `${cup.board.length}/${cup.maxPlayers}` : String(cup.board.length), inline: true },
+    { name: 'Ends', value: `<t:${Math.floor(cup.endsAt / 1000)}:R>`, inline: true },
+    { name: 'Prizes', value: [prize(0, '1st'), prize(1, '2nd'), prize(2, '3rd')].filter(Boolean).join('\n') || `${cup.prize} tokens`, inline: false },
+  ];
+  return new EmbedBuilder()
+    .setAuthor({ name: 'OGVAULT Tournaments' })
+    .setTitle(cup.name)
+    .setURL(`${SITE}/tournaments/${cup.id}`)
+    .setColor(open ? 0xf5c542 : 0x5865f2)
+    .setDescription(open
+      ? (kind === 'scrim'
+        ? 'Register below. Play **scrims** (including practice listings) to score points.'
+        : 'Register below. Play **Kill Races** on the site to score points.')
+      : 'This cup is closed.')
+    .addFields(fields)
+    .setFooter({ text: open ? 'Linked site account required to register' : 'Results are paid on the site' })
+    .setTimestamp(new Date(cup.endsAt));
+}
+
+function tournamentComponents(cup) {
+  const open = !cup.paidOut && Date.now() < cup.endsAt && !(cup.maxPlayers && cup.board.length >= cup.maxPlayers);
+  return [new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`ogvault:cup:join:${cup.id}`).setLabel('Register').setStyle(ButtonStyle.Success).setDisabled(!open),
+    new ButtonBuilder().setLabel('Open on site').setStyle(ButtonStyle.Link).setURL(`${SITE}/tournaments/${cup.id}`),
+  )];
+}
+
+async function postTournament(guild, cup) {
+  const channel = await ensureTournamentsChannel(guild);
+  const message = await channel.send({ embeds: [tournamentEmbed(cup)], components: tournamentComponents(cup) });
+  update((state) => {
+    const row = (state.tournaments || []).find((item) => item.id === cup.id);
+    if (row) {
+      row.discordChannelId = channel.id;
+      row.discordMessageId = message.id;
+    }
+  });
+  return message;
+}
+
+async function refreshTournamentPost(guild, cupId) {
+  const state = load();
+  const cup = (state.tournaments || []).find((item) => item.id === cupId);
+  if (!cup?.discordMessageId) return;
+  const channelId = cup.discordChannelId;
+  try {
+    const channel = await guild.channels.fetch(channelId);
+    const message = await channel.messages.fetch(cup.discordMessageId);
+    await message.edit({ embeds: [tournamentEmbed(cup)], components: tournamentComponents(cup) });
+  } catch { /* post may have been deleted */ }
+}
+
+async function syncTournamentPosts(guild) {
+  const channel = await ensureTournamentsChannel(guild);
+  const state = load();
+  for (const cup of state.tournaments || []) {
+    if (!cup.discordMessageId && !cup.paidOut && Date.now() < cup.endsAt) {
+      await postTournament(guild, cup).catch(() => {});
+    } else if (cup.discordMessageId) {
+      await refreshTournamentPost(guild, cup.id).catch(() => {});
+    }
+  }
+  return channel;
+}
+
+async function handleCupRegister(interaction) {
+  const cupId = String(interaction.customId || '').slice('ogvault:cup:join:'.length);
+  if (!cupId) {
+    await interaction.reply({ content: 'That cup is not valid.', ephemeral: true });
+    return;
+  }
+  let cup;
+  try {
+    cup = update((state) => {
+      const user = state.users.find((item) => !item.npc && String(item.discordId || '') === interaction.user.id);
+      if (!user) fail(400, 'Link your OGVAULT account in #verify first, then press Register again.');
+      return joinCup(state, user, cupId);
+    });
+  } catch (error) {
+    await interaction.reply({ content: error.status ? error.message : 'Could not register you.', ephemeral: true });
+    return;
+  }
+  await interaction.reply({
+    content: cup.entry > 0
+      ? `You are in **${cup.name}**. ${cup.entry} tokens were taken as the entry.`
+      : `You are in **${cup.name}**.`,
+    ephemeral: true,
+  });
+  if (interaction.guild) await refreshTournamentPost(interaction.guild, cupId);
 }
 
 function banAccount(username, lengthHours) {
@@ -1704,8 +1841,9 @@ async function handleCommand(interaction) {
     }
     if (interaction.commandName === 'tournament' && interaction.options.getSubcommand() === 'create') {
       const cup = createTournament(interaction.options);
+      await postTournament(interaction.guild, cup).catch(() => {});
       await interaction.reply({
-        content: `Cup ${cup.name} is open for ${cup.maxPlayers} players until <t:${Math.floor(cup.endsAt / 1000)}:f>.`,
+        content: `${cupKindLabel(cupKind(cup))} **${cup.name}** is live in #tournaments until <t:${Math.floor(cup.endsAt / 1000)}:f>.`,
         ephemeral: true,
       });
       return;
@@ -1954,7 +2092,7 @@ const COMMAND_GUIDE = [
   ['/stats', 'Show live players, registered users, open lobbies, games, tokens, and withdrawals.'],
   ['/tokens add', 'Add tokens to one site account.'],
   ['/tokens remove', 'Remove tokens from one site account.'],
-  ['/tournament create', 'Open a cup on the site with a name, player cap, entry, hours, and prizes.'],
+  ['/tournament create', 'Host a Kill Race or Scrim cup: length, entry, 1st / 2nd / 3rd prizes. It posts in #tournaments with a Register button.'],
   ['/website', 'Take the whole site offline for repair or maintenance, with an optional countdown, or bring it back online.'],
   ['/withdrawals list', 'List pending token withdrawal requests.'],
 ];
@@ -2422,6 +2560,11 @@ export function startDiscordAdmin(withPresence = true) {
       announceWeeklyResults().catch(() => console.error('Weekly Vault announcement failed'));
       setInterval(() => { announceWeeklyResults().catch(() => console.error('Weekly Vault announcement failed')); }, 5 * 60 * 1000);
       await ensureVoiceChannels(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up voice channels'));
+      await syncTournamentPosts(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up tournaments'));
+      setInterval(() => {
+        const guild = client.guilds.cache.get(guildId);
+        if (guild) syncTournamentPosts(guild).catch(() => {});
+      }, 5 * 60 * 1000);
       applyBotStatus();
       console.log('Reviewer role can read message history');
     } catch (error) {
@@ -2459,6 +2602,10 @@ export function startDiscordAdmin(withPresence = true) {
     }
     if (interaction.isButton() && String(interaction.customId || '').startsWith('ogmod:')) {
       handleModButton(interaction).catch(() => {});
+      return;
+    }
+    if (interaction.isButton() && String(interaction.customId || '').startsWith('ogvault:cup:join:')) {
+      handleCupRegister(interaction).catch(() => {});
       return;
     }
     if (interaction.isButton() && String(interaction.customId || '').startsWith('ogvault:')) {

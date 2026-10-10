@@ -121,24 +121,51 @@ export function Potw() {
 
 export function Tournaments() {
   const [cups, setCups] = useState([]);
-  useEffect(() => { api('/api/tournaments').then((data) => setCups(data.tournaments)); }, []);
+  const now = useNow();
+  useEffect(() => { api('/api/tournaments').then((data) => setCups(data.tournaments || [])).catch(() => setCups([])); }, []);
+  const live = cups.filter((cup) => !cup.paidOut && cup.endsAt > now);
+  const past = cups.filter((cup) => cup.paidOut || cup.endsAt <= now);
   return (
     <div className="stack-lg">
-      <PageHead kicker="Cups" title="Tournaments" text="Cups score finished Kill Race listings. Join, play, and the wins turn into points." />
-      <div className="cup-grid">
-        {cups.map((cup) => (
-          <Link key={cup.id} to={`/tournaments/${cup.id}`} className="panel cup">
-            <p className="kicker">{cup.paidOut ? 'Paid' : cup.entry ? 'Buy-in' : 'Free'}</p>
-            <h2>{cup.name}</h2>
-            <p>{cup.blurb}</p>
-            <div className="split">
-              <span>Prize <Amount value={cup.prize} /></span>
-              <span>{cup.maxPlayers ? `${cup.players}/${cup.maxPlayers}` : cup.players} players</span>
-            </div>
-          </Link>
-        ))}
-      </div>
+      <PageHead kicker="Cups" title="Tournaments" text="Hosted on Discord. Register here or in #tournaments. Kill Race cups score your 1v1s. Scrim cups score practice and live matches." />
+      {!live.length && <p className="muted">No live tournament right now. When one opens, it shows up here and in Discord.</p>}
+      {!!live.length && (
+        <div className="cup-grid">
+          {live.map((cup) => <CupCard key={cup.id} cup={cup} now={now} />)}
+        </div>
+      )}
+      {!!past.length && (
+        <section className="shop-section">
+          <div className="shop-section-head">
+            <h2>Past cups</h2>
+            <p>Paid out or closed.</p>
+          </div>
+          <div className="cup-grid">
+            {past.map((cup) => <CupCard key={cup.id} cup={cup} now={now} />)}
+          </div>
+        </section>
+      )}
     </div>
+  );
+}
+
+function CupCard({ cup, now }) {
+  const open = !cup.paidOut && cup.endsAt > now;
+  const time = parts(cup.endsAt, now);
+  return (
+    <Link to={`/tournaments/${cup.id}`} className={`panel cup ${open ? 'live' : ''}`}>
+      <p className="kicker">{open ? 'Live' : 'Closed'} · {cup.kindLabel || 'Kill Race'}</p>
+      <h2>{cup.name}</h2>
+      <p>{cup.entry ? <>Entry <Amount value={cup.entry} /></> : 'Free entry'} · {cup.maxPlayers ? `${cup.players}/${cup.maxPlayers}` : cup.players} registered</p>
+      {!!cup.places?.length && (
+        <div className="cup-places">
+          {[['1st', cup.places[0]], ['2nd', cup.places[1]], ['3rd', cup.places[2]]].filter(([, value]) => value != null).map(([place, value]) => (
+            <span key={place}><b>{place}</b> <Amount value={value} /></span>
+          ))}
+        </div>
+      )}
+      {open && <p className="muted">{pad(time.d)}d {pad(time.h)}h {pad(time.m)}m left</p>}
+    </Link>
   );
 }
 
@@ -154,7 +181,7 @@ export function Tournament() {
   const time = parts(cup.endsAt, now);
   return (
     <div className="stack-lg">
-      <PageHead kicker={cup.paidOut ? 'Closed' : 'Live cup'} title={cup.name} text={cup.blurb}>
+      <PageHead kicker={cup.paidOut ? 'Closed' : `Live · ${cup.kindLabel || 'Kill Race'}`} title={cup.name} text={cup.kind === 'scrim' ? 'Play scrims and practice listings. Wins score 100 points plus your score.' : 'Play Kill Races on the site. Wins score 100 points plus your score.'}>
         {!cup.paidOut && (
           <div className="cd">
             <b>{pad(time.d)}<small>d</small></b>
@@ -165,16 +192,19 @@ export function Tournament() {
       </PageHead>
       <div className="panel actions">
         <div>
-          <p>Prize <Amount value={cup.prize} /> · entry {cup.entry ? <Amount value={cup.entry} /> : 'free'}</p>
-          <p className="muted">
-            {cup.places
-              ? `Prizes ${cup.places.map((amount) => amount).join(' / ')} for 1st, 2nd, and 3rd. A win is 100 points plus your score ÷ 100.`
-              : 'A win is worth 100 points plus your score ÷ 100. Payout is 60 / 25 / 15.'}
-          </p>
+          <p>Prize pool <Amount value={cup.prize} /> · entry {cup.entry ? <Amount value={cup.entry} /> : 'free'} · {cup.maxPlayers ? `${cup.players}/${cup.maxPlayers}` : cup.players} registered</p>
+          {!!cup.places?.length && (
+            <div className="cup-places">
+              {[['1st', cup.places[0]], ['2nd', cup.places[1]], ['3rd', cup.places[2]]].filter(([, value]) => value != null).map(([place, value]) => (
+                <span key={place}><b>{place}</b> <Amount value={value} /></span>
+              ))}
+            </div>
+          )}
+          <p className="muted">{cup.kind === 'scrim' ? 'Scrim cups count practice listings too.' : 'Kill Race cups only count real 1v1s, not practice.'}</p>
         </div>
         {data.joined ? (
           <>
-            <Link className="btn" to="/play">Play a table</Link>
+            <Link className="btn" to="/play">{cup.kind === 'scrim' ? 'Open a listing' : 'Play a Kill Race'}</Link>
             {!cup.paidOut && now < cup.endsAt && (
               <button className="btn ghost" onClick={async () => {
                 try {
@@ -195,7 +225,7 @@ export function Tournament() {
               toast('You are in the cup');
               load();
             } catch (err) { toast(err.message, 'bad'); }
-          }}>Join cup</button>
+              }}>Register</button>
         )}
       </div>
       <div className="panel">

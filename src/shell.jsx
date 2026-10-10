@@ -11,6 +11,7 @@ const NAV = [
   ['Kill Race', '/play', PlayIcon],
   ['Leaderboard', '/leaderboard', BoardIcon],
   ['Weekly Vault', '/weekly', StarIcon],
+  ['Tournaments', '/tournaments', CupIcon],
   ['Shop', '/shop', ShopIcon],
   ['Wallet', '/wallet', WalletIcon],
   ['Rewards', '/rewards', GiftIcon],
@@ -547,6 +548,15 @@ function WalletIcon() {
       <rect className="body" x="3" y="6" width="18" height="13" rx="2" />
       <path d="M3 10h18" />
       <path className="clasp" d="M16 14h3" />
+    </svg>
+  );
+}
+function CupIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="ico ico-cup">
+      <path d="M8 4h8v2.5a4 4 0 0 1-8 0z" />
+      <path d="M8 6H4.5A2.5 2.5 0 0 0 7 9.4M16 6h3.5A2.5 2.5 0 0 1 17 9.4" />
+      <path d="M10 13.5h4l-.7 3.5h-2.6zM9 21h6M12 17v4" />
     </svg>
   );
 }

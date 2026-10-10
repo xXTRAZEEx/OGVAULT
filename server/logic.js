@@ -433,16 +433,38 @@ function applyResult(user, match, score) {
   }
 }
 
+export function cupKind(cup) {
+  return cup?.kind === 'scrim' ? 'scrim' : 'killrace';
+}
+
+export function cupKindLabel(kind) {
+  return kind === 'scrim' ? 'Scrim' : 'Kill Race';
+}
+
 function addCupPoints(state, userId, match, score) {
-  if (match.practice || isPointsMatch(match)) return;
+  if (isPointsMatch(match)) return;
   for (const cup of state.tournaments) {
     if (cup.paidOut || Date.now() > cup.endsAt) continue;
+    if (cupKind(cup) === 'killrace' && match.practice) continue;
     const row = cup.board.find((item) => item.userId === userId);
     if (!row) continue;
     const win = match.winnerId === userId ? 100 : 0;
     row.points = round(row.points + score / 100 + win);
     row.plays += 1;
   }
+}
+
+export function joinCup(state, user, cupId) {
+  ensureCups(state);
+  const cup = state.tournaments.find((item) => item.id === cupId);
+  if (!cup) fail(404, 'Cup not found');
+  if (cup.paidOut || Date.now() > cup.endsAt) fail(400, 'That cup is closed');
+  if (cup.maxPlayers && cup.board.length >= cup.maxPlayers) fail(400, 'That cup is full');
+  if (cup.board.some((row) => row.userId === user.id)) fail(400, 'You are already in');
+  if (cup.entry > 0) debit(state, user, cup.entry, 'entry', { cup: cup.id });
+  if (!Array.isArray(cup.places)) cup.prize = round(cup.prize + cup.entry);
+  cup.board.push({ userId: user.id, points: 0, plays: 0 });
+  return cup;
 }
 
 export function resolveMatch(state, match, { forfeitId = null } = {}) {

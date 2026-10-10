@@ -193,6 +193,12 @@ async function main() {
     ...[helper, reviewer, creator, na, eu].filter(Boolean).map((role) => overwrite(role.id, 0n, SEND)),
     overwrite(owner.id, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n),
   ]);
+  await ensureText(channels, news, 'tournaments', 'Live cups. Press Register to join.', [
+    overwrite(everyone.id, 0n, VIEW | SEND),
+    overwrite(member.id, VIEW | HISTORY | REACTIONS, SEND),
+    ...[helper, reviewer, creator, na, eu].filter(Boolean).map((role) => overwrite(role.id, 0n, SEND)),
+    overwrite(owner.id, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n),
+  ]);
   const supportPanel = await ensureText(
     channels,
     start,
@@ -215,7 +221,7 @@ async function main() {
   const order = [
     ['Start here', ['welcome', 'rules', 'how-to-play', 'verify', 'regions', 'support']],
     ['Community', ['general', 'clips', 'support']],
-    ['News', ['announcements']],
+    ['News', ['announcements', 'tournaments']],
     ['Staff', null],
     ['Finance', null],
   ];

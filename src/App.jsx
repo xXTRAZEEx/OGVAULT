@@ -1,12 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Route, Routes, useLocation } from 'react-router-dom';
 import { api, onWs, setToken } from './api';
 import { Shell } from './shell';
 import { LaunchGate, VpnNotice, WebsiteDown, WelcomeNotice } from './ui';
 import { Home } from './pages/Home';
 import { Play } from './pages/Play';
 import { Match } from './pages/Match';
-import { Leaderboard, Potw } from './pages/Boards';
+import { Leaderboard, Potw, Tournament, Tournaments } from './pages/Boards';
 import { Shop, Wallet, Rewards } from './pages/Economy';
 import { Blackjack } from './pages/Blackjack';
 import { Friends, Profile, HowTo, Legal } from './pages/Social';
@@ -131,8 +131,8 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/play" element={<Play />} />
           <Route path="/match/:id" element={<Match />} />
-          <Route path="/tournaments" element={<Navigate to="/play" replace />} />
-          <Route path="/tournaments/:id" element={<Navigate to="/play" replace />} />
+          <Route path="/tournaments" element={<Tournaments />} />
+          <Route path="/tournaments/:id" element={<Tournament />} />
           <Route path="/leaderboard" element={<Leaderboard />} />
           <Route path="/weekly" element={<Potw />} />
           <Route path="/potw" element={<Potw />} />

@@ -17,6 +17,9 @@ import {
   credit,
   debit,
   ensureCups,
+  joinCup,
+  cupKind,
+  cupKindLabel,
   ensurePotw,
   freshMatch,
   matchDto,
@@ -395,6 +398,8 @@ function cupSummary(state, cup) {
     maxPlayers: cup.maxPlayers || 0,
     endsAt: cup.endsAt,
     paidOut: cup.paidOut,
+    kind: cupKind(cup),
+    kindLabel: cupKindLabel(cupKind(cup)),
     players: cup.board.length,
     board,
   };
@@ -988,14 +993,7 @@ app.post(
     const result = update((state) => {
       ensureCups(state);
       const user = state.users.find((item) => item.id === me.id);
-      const cup = state.tournaments.find((item) => item.id === req.params.id);
-      if (!cup) fail(404, 'Cup not found');
-      if (cup.paidOut || Date.now() > cup.endsAt) fail(400, 'That cup is closed');
-      if (cup.maxPlayers && cup.board.length >= cup.maxPlayers) fail(400, 'That cup is full');
-      if (cup.board.some((row) => row.userId === user.id)) fail(400, 'You are already in');
-      if (cup.entry > 0) debit(state, user, cup.entry, 'entry', { cup: cup.id });
-      if (!Array.isArray(cup.places)) cup.prize = round(cup.prize + cup.entry);
-      cup.board.push({ userId: user.id, points: 0, plays: 0 });
+      const cup = joinCup(state, user, req.params.id);
       return { tournament: cupSummary(state, cup), user: userDto(user, { self: true }) };
     });
     pingLobby();
