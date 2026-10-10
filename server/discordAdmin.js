@@ -70,7 +70,7 @@ const commands = [
         .addNumberOption((option) => option.setName('second').setDescription('2nd place prize in tokens').setRequired(true).setMinValue(0))
         .addNumberOption((option) => option.setName('third').setDescription('3rd place prize in tokens').setRequired(true).setMinValue(0))
         .addIntegerOption((option) =>
-          option.setName('players').setDescription('Maximum players (default 32)').setRequired(false).setMinValue(3)
+          option.setName('players').setDescription('Maximum players (default 100)').setRequired(false).setMinValue(3).setMaxValue(100)
         )
     ),
   adminOnly(new SlashCommandBuilder()
@@ -429,12 +429,12 @@ function clearSessions(state, userId) {
 function createTournament(options) {
   const name = String(options.getString('name') || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80);
   const kind = options.getString('type') === 'scrim' ? 'scrim' : 'killrace';
-  const players = options.getInteger('players') || 32;
+  const players = options.getInteger('players') || 100;
   const entry = money(options.getNumber('entry'));
   const length = hours(options.getNumber('hours'));
   const places = [money(options.getNumber('first')), money(options.getNumber('second')), money(options.getNumber('third'))];
   if (!name) fail(400, 'Enter a cup name');
-  if (!Number.isInteger(players) || players < 3) fail(400, 'Players must be at least 3');
+  if (!Number.isInteger(players) || players < 3 || players > 100) fail(400, 'Players must be between 3 and 100');
   return update((state) => {
     if (!Array.isArray(state.tournaments)) state.tournaments = [];
     const cup = {
