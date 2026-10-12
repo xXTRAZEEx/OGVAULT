@@ -300,7 +300,7 @@ const PACKS = [
   { coins: 50, price: 50, tone: 'orange' },
 ];
 
-const NETWORKS = ['Solana', 'Ethereum', 'Bitcoin'];
+const NETWORKS = ['Solana'];
 
 function cents(n) {
   const value = Math.round(Number(n) * 100) / 100;
@@ -410,11 +410,18 @@ export function Wallet() {
   const [tipName, setTipName] = useState('');
   const [buying, setBuying] = useState(false);
   const [cashout, setCashout] = useState(null);
+  const [walletMeta, setWalletMeta] = useState({
+    purchaseTax: 1.2,
+    cryptoFee: 1.2,
+    withdrawFee: 3.15,
+    minWithdraw: 15,
+    cryptoNetworks: NETWORKS,
+  });
   const locked = cashout && !cashout.unlocked;
   const lockNote = locked && (
     <p className="callout cashout-lock">
-      Tokens won from free Vault Points play can be used in matches, but cashing out unlocks once your account has deposited at least <strong><Amount value={cashout.required} /></strong> in total.
-      You have deposited <strong><Amount value={cashout.deposited} /></strong> so far.
+      Deposit at least <strong><Amount value={cashout.required} /></strong> to unlock cashout.
+      <span className="muted"> <Amount value={cashout.deposited} /> deposited so far.</span>
       <button className="btn sm" type="button" onClick={() => openTab('deposit')}>Deposit</button>
     </p>
   );
@@ -424,6 +431,13 @@ export function Wallet() {
     setTxs(data.txs || []);
     setWithdrawals(data.withdrawals || []);
     if (data.cashout) setCashout(data.cashout);
+    setWalletMeta({
+      purchaseTax: data.purchaseTax ?? 1.2,
+      cryptoFee: data.cryptoFee ?? 1.2,
+      withdrawFee: data.withdrawFee ?? 3.15,
+      minWithdraw: data.minWithdraw ?? 15,
+      cryptoNetworks: data.cryptoNetworks?.length ? data.cryptoNetworks : NETWORKS,
+    });
   }
 
   async function load() {
@@ -467,7 +481,7 @@ export function Wallet() {
   }
 
   const withdrawValue = cents(amount);
-  const withdrawFee = withdrawValue > 0 ? 2.5 : 0;
+  const withdrawFee = withdrawValue > 0 ? walletMeta.withdrawFee : 0;
   const withdrawReceive = cents(Math.max(0, withdrawValue - withdrawFee));
   const tipValue = cents(tipAmount);
   const tipFee = me?.vip ? 0 : cents(tipValue * 0.2);
@@ -516,7 +530,7 @@ export function Wallet() {
               </article>
             ))}
           </div>
-          <p className="muted">One coin is one pound. Card checkout charges that pack in GBP with £2.30 tax included. Pay with crypto opens a NOWPayments page with a QR code and the address. Tokens are added after the payment is confirmed.</p>
+          <p className="muted">One coin is one pound. Card checkout charges that pack in GBP with {gbp(walletMeta.purchaseTax)} tax included. Crypto checkout adds {gbp(walletMeta.cryptoFee)}. Pay with crypto opens a NOWPayments page with a QR code and the address. Tokens are added after the payment is confirmed.</p>
         </div>
       )}
 
@@ -527,7 +541,7 @@ export function Wallet() {
               <span>Available balance</span>
               <strong className="huge"><Amount value={me.balance} /></strong>
             </div>
-            <p>Minimum withdrawal is 15. A 2.5 fee is taken from that amount. Withdrawals take 24 hours.</p>
+            <p>Minimum withdrawal is {walletMeta.minWithdraw}. A {gbp(walletMeta.withdrawFee)} fee is taken from that amount. Withdrawals take 24 hours.</p>
           </div>
           {lockNote}
           <form className="stack" onSubmit={async (event) => {
@@ -538,7 +552,7 @@ export function Wallet() {
                 body: {
                   amount: withdrawValue,
                   method,
-                  network,
+                  network: method === 'crypto' ? 'Solana' : network,
                   address,
                   email,
                   accountName,
@@ -563,7 +577,7 @@ export function Wallet() {
               </label>
               {method === 'crypto' && (
                 <label>Crypto option *
-                  <Select label="Crypto option" value={network} onChange={setNetwork} options={NETWORKS} />
+                  <input value="Solana" readOnly aria-label="Crypto option" />
                 </label>
               )}
               {method === 'paypal' && (
@@ -591,9 +605,12 @@ export function Wallet() {
                 </span>
               </label>
               {method === 'crypto' && (
-                <label>Address *
-                  <input value={address} onChange={(event) => setAddress(event.target.value)} spellCheck="false" autoComplete="off" required />
-                </label>
+                <>
+                  <label>Address *
+                    <input value={address} onChange={(event) => setAddress(event.target.value)} spellCheck="false" autoComplete="off" required placeholder="Solana wallet address" />
+                  </label>
+                  <p className="callout">Solana network addresses only.</p>
+                </>
               )}
             </div>
             <label className="check">

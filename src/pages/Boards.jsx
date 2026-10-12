@@ -28,7 +28,7 @@ export function Leaderboard() {
   }, [period]);
   return (
     <div>
-      <PageHead kicker="Ranks" title="Leaderboard" text="All-time is tokens won. The clocks count profit from finished Kill Races.">
+      <PageHead kicker="Ranks" title="Leaderboard" text="Only Kill Race profit counts. Daily claims, Discord status, deposits, and other free tokens do not.">
         <div className="seg">
           {[['all', 'All time'], ['daily', 'Today'], ['weekly', 'Week'], ['monthly', 'Month']].map(([id, label]) => (
             <button key={id} className={period === id ? 'on' : ''} onClick={() => setPeriod(id)}>{label}</button>
@@ -74,7 +74,7 @@ export function Potw() {
   const leaders = data.potw.leaders || [];
   return (
     <div className="stack-lg">
-      <PageHead kicker="Silver Vault Points" title="Weekly Vault" text="Earn points from your daily claim and every Kill Race you finish. The top three this week take 8, 4, and 2 tokens when the clock hits zero.">
+      <PageHead kicker="Silver Vault Points" title="Weekly Vault" text="Rank from Kill Race Vault Points only. Daily and Discord status claims still pay you, but they do not move this board. Top three take 4, 2, and 1 tokens when the clock hits zero.">
         <div className="cd">
           <b>{pad(time.d)}<small>d</small></b>
           <b>{pad(time.h)}<small>h</small></b>
@@ -83,7 +83,7 @@ export function Potw() {
         </div>
       </PageHead>
       <div className="weekly-prizes">
-        {[['1st', 8], ['2nd', 4], ['3rd', 2]].map(([place, prize], index) => (
+        {[['1st', 4], ['2nd', 2], ['3rd', 1]].map(([place, prize], index) => (
           <div key={place} className={`weekly-prize place-${index + 1}`}>
             <span>{place}</span>
             <strong><Amount value={prize} /></strong>
@@ -91,7 +91,7 @@ export function Potw() {
         ))}
         <div className="weekly-earn">
           <span>How to earn</span>
-          <p><Points value={1} /> daily claim · <Points value={5} /> per token Kill Race win · play Kill Races for Vault Points too</p>
+          <p><Points value={5} /> per token Kill Race win · finish Kill Races for Vault Points · daily and status claims pay you but do not rank here</p>
         </div>
       </div>
       <Podium places={leaders.slice(0, 3).map((user, index) => ({
@@ -112,7 +112,7 @@ export function Potw() {
         ))}
       </div>
       )}
-      {!leaders.length && <p className="muted">No points earned this week yet. Claim your daily or finish a Kill Race to get on the board.</p>}
+      {!leaders.length && <p className="muted">No Kill Race points this week yet. Finish a match to get on the board.</p>}
     </div>
   );
 }

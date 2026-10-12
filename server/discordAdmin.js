@@ -24,6 +24,7 @@ import {
 import { disputeReviewChannelId } from './discord.js';
 import crypto from 'crypto';
 import {
+  CRYPTO_NETWORKS,
   INVENTORY_GRANTS,
   POINTS,
   credit,
@@ -2108,7 +2109,6 @@ async function replyStatusRate(interaction) {
       `**Paid today** ${paidToday} · rate ${STATUS_RATE} tokens + ${STATUS_POINTS} Vault Points a day after 1 hour with the status`,
       names.length ? names.join('\n') : '',
     ].filter(Boolean).join('\n'),
-    ephemeral: true,
     allowedMentions: { parse: [] },
   });
 }
@@ -2116,12 +2116,11 @@ async function replyStatusRate(interaction) {
 async function replyOwnBalance(interaction) {
   const user = load().users.find((item) => !item.npc && item.discordId === interaction.user.id);
   if (!user) {
-    await interaction.reply({ content: 'Your Discord is not linked to an OGVAULT account yet. Sign in at https://ogvault.co.uk with Discord.', ephemeral: true });
+    await interaction.reply({ content: 'Your Discord is not linked to an OGVAULT account yet. Sign in at https://ogvault.co.uk with Discord.' });
     return;
   }
   await interaction.reply({
     content: `**${user.username}**\nTokens: ${Number(round(user.balance || 0)).toFixed(2)}\nVault Points: ${Math.round(user.points || 0)}`,
-    ephemeral: true,
   });
 }
 
@@ -2171,7 +2170,7 @@ async function replyEarn(interaction) {
       { name: 'Your status', value: status.live ? 'Detected ✅' : 'Not detected', inline: true },
       { name: 'Today', value: status.paid ? 'Paid ✅' : `${status.minutes} / 60 minutes`, inline: true },
     );
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  await interaction.reply({ embeds: [embed] });
 }
 
 const LINK_TRIES = 5;
@@ -2324,7 +2323,6 @@ async function handleCommand(interaction) {
           content: closed.length === 1
             ? `Ended **${closed[0].name}**. Cleared the Tournament role from ${stripped} member${stripped === 1 ? '' : 's'}.`
             : `Ended ${closed.length} tournaments. Cleared the Tournament role from ${stripped} member${stripped === 1 ? '' : 's'}.`,
-          ephemeral: true,
         });
         return;
       }
@@ -2333,7 +2331,6 @@ async function handleCommand(interaction) {
       await postTournament(interaction.guild, cup).catch(() => {});
       await interaction.reply({
         content: `**${cup.name}** (${cup.project} · ${cup.region}) is in #tournaments. ${cup.maxPlayers} slots. Signup closes <t:${Math.floor(cup.endsAt / 1000)}:R>. Event starts then and ends <t:${Math.floor(cupEventEnd(cup) / 1000)}:R>.`,
-        ephemeral: true,
       });
       return;
     }
@@ -2364,7 +2361,7 @@ async function handleCommand(interaction) {
       return;
     }
     if (interaction.commandName === 'stats') {
-      await interaction.reply({ embeds: [siteStatsEmbed()], ephemeral: true });
+      await interaction.reply({ embeds: [siteStatsEmbed()] });
       return;
     }
     if (interaction.commandName === 'give') {
@@ -2382,20 +2379,19 @@ async function handleCommand(interaction) {
       await interaction.guild.members.addRole({ user: user.id, role, reason: 'OGVAULT /give' });
       if (role.name === 'Helper') await syncTicketAccess(interaction.guild);
       if (role.name === 'Helper' || role.name === REVIEWER_ROLE_NAME) await ensureStaffChat(interaction.guild).catch(() => {});
-      await interaction.reply({ content: `${user.username} now has ${role.name}.`, ephemeral: true });
+      await interaction.reply({ content: `${user.username} now has ${role.name}.` });
       return;
     }
     if (interaction.commandName === 'ban') {
       const result = banAccount(interaction.options.getString('username'), interaction.options.getNumber('hours'));
       await interaction.reply({
         content: `${result.username} is banned until <t:${Math.floor(result.banUntil / 1000)}:f>.`,
-        ephemeral: true,
       });
       return;
     }
     if (interaction.commandName === 'unban') {
       const result = unbanAccount(interaction.options.getString('username'));
-      await interaction.reply({ content: `${result.username} can sign in again.`, ephemeral: true });
+      await interaction.reply({ content: `${result.username} can sign in again.` });
       return;
     }
     if (interaction.commandName === 'matchmaking') {
@@ -2405,7 +2401,6 @@ async function handleCommand(interaction) {
         content: result.enabled
           ? 'Matchmaking is on.'
           : `Matchmaking is off until <t:${Math.floor(result.until / 1000)}:f>.`,
-        ephemeral: true,
       });
       return;
     }
@@ -2424,7 +2419,6 @@ async function handleCommand(interaction) {
           : result.until
             ? `The site is offline for ${label} until <t:${Math.floor(result.until / 1000)}:R>.`
             : `The site is offline for ${label}.`,
-        ephemeral: true,
       });
       return;
     }
@@ -2432,13 +2426,12 @@ async function handleCommand(interaction) {
       const result = userBalance(interaction.options.getString('username'));
       await interaction.reply({
         content: `${result.username} has ${Number(result.balance).toFixed(2)} tokens and ${result.points} Vault Points.`,
-        ephemeral: true,
       });
       return;
     }
     if (interaction.commandName === 'announcements') {
       const row = await pushAnnouncement(interaction.guild, interaction.options.getString('title'), interaction.options.getString('message'));
-      await interaction.reply({ content: 'Posted on the site.', ephemeral: true });
+      await interaction.reply({ content: 'Posted on the site.' });
       return row;
     }
     if (interaction.commandName === 'staffapps') {
@@ -2447,7 +2440,6 @@ async function handleCommand(interaction) {
         content: open
           ? 'Staff applications are open.'
           : 'Staff applications are closed. New applicants will be told we are not accepting any more.',
-        ephemeral: true,
       });
       return;
     }
@@ -2459,7 +2451,6 @@ async function handleCommand(interaction) {
         content: now.enabled
           ? `The site is locked behind the launch page. Members: **${now.members ?? '…'}/${now.goal}**. It opens by itself when the goal is reached.`
           : 'The launch page is off. The site is open.',
-        ephemeral: true,
       });
       return;
     }
@@ -2483,7 +2474,6 @@ async function handleCommand(interaction) {
       if (itemKey === 'vip') sweepGoldVip().catch(() => {});
       await interaction.reply({
         content: `Updated ${result.updated} user${result.updated === 1 ? '' : 's'}.`,
-        ephemeral: true,
       });
       return;
     }
@@ -2498,7 +2488,6 @@ async function handleCommand(interaction) {
       const result = adjustTokens(username, amount, sub === 'add' ? 'add' : 'remove');
       await interaction.reply({
         content: `${result.username} now has ${result.balance} tokens.`,
-        ephemeral: true,
       });
     }
   } catch (error) {
@@ -2555,7 +2544,8 @@ function copyValueFromEmbed(interaction) {
   const field = interaction.message?.embeds?.[0]?.fields?.find((item) => item.name === 'Send to');
   const lines = String(field?.value || '').split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('TEST'));
   if (interaction.customId === 'ogcopy:paypal') return lines.find((line) => line.includes('@')) || '';
-  return lines.find((line) => !['Solana', 'Ethereum', 'Bitcoin'].includes(line)) || '';
+  const networks = new Set(CRYPTO_NETWORKS.map((item) => item.toLowerCase()));
+  return lines.find((line) => !networks.has(line.toLowerCase())) || '';
 }
 
 export async function handleCopyWithdrawal(interaction) {
@@ -2704,7 +2694,7 @@ export function weeklyResultMessage(result) {
   });
   embed.addFields({
     name: '\u200b',
-    value: '🔥 **A new week is live.** Claim your daily Vault Point and win token Kill Races to climb.\n🏅 Top 3 win **8**, **4** and **2 tokens**. [See the board](' + SITE_URL + '/weekly)',
+    value: '🔥 **A new week is live.** Claim your daily Vault Point and win token Kill Races to climb.\n🏅 Top 3 win **4**, **2** and **1 tokens**. [See the board](' + SITE_URL + '/weekly)',
   });
   const mentions = result.winners.map((row) => row.discordId).filter(Boolean);
   const shout = result.winners.map((row) => `${MEDALS[row.place - 1]} ${winnerName(row)}`).join('  ');
@@ -2829,7 +2819,6 @@ async function handleReport(interaction) {
   });
   await interaction.reply({
     content: sent ? 'Thanks. Your report was sent to the Helpers.' : 'Reports are not set up yet. Open a support ticket instead.',
-    ephemeral: true,
   });
 }
 

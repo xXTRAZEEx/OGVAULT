@@ -225,9 +225,39 @@ export function matchDto(state, match, viewerId) {
 }
 
 const WEEK_MS = 7 * 86400000;
-export const POTW_PRIZES = [8, 4, 2];
+export const POTW_PRIZES = [4, 2, 1];
 export const POINTS = { daily: 1, played: 0, win: 5, status: 2 };
-const RANKED_POINT_TYPES = new Set(['daily', 'match', 'win', 'status']);
+/** Weekly Vault ranks Kill Race point gains only — not daily/status claims. */
+const RANKED_POINT_TYPES = new Set(['match', 'win']);
+
+export function battleTokenProfit(state, userId, start = 0, end = Number.POSITIVE_INFINITY) {
+  let total = 0;
+  for (const row of state.history || []) {
+    if (row.at < start || row.at >= end || row.winnerId !== userId || row.practice || row.currency === 'points') continue;
+    total = round(total + Math.max(0, round((row.payout || 0) - row.entry)));
+  }
+  return total;
+}
+
+export function recomputeBattleEarned(state) {
+  let changed = false;
+  let prizes = 0;
+  for (const user of state.users || []) {
+    if (user.npc) continue;
+    if (!user.stats) user.stats = blankStats();
+    const next = battleTokenProfit(state, user.id);
+    if (round(user.stats.earned || 0) !== next) {
+      user.stats.earned = next;
+      changed = true;
+    }
+    prizes = round(prizes + next);
+  }
+  if (round(state.prizes || 0) !== prizes) {
+    state.prizes = prizes;
+    changed = true;
+  }
+  return changed;
+}
 
 export function creditPoints(state, user, amount, type, meta = {}) {
   if (!user || user.npc || !(amount > 0)) return 0;
@@ -356,8 +386,6 @@ export function ensurePotw(state, timeZone) {
         const user = state.users.find((item) => item.id === row.userId);
         if (!user) return;
         credit(state, user, prize, 'potw', { place: index + 1 });
-        user.stats.earned = round(user.stats.earned + prize);
-        state.prizes = round(state.prizes + prize);
         winners.push({ place: index + 1, userId: user.id, username: user.username, discordId: user.discordId || null, points: row.points, prize });
       });
       if (!Array.isArray(state.potwResults)) state.potwResults = [];
@@ -403,8 +431,6 @@ export function ensureCups(state) {
       const user = state.users.find((u) => u.id === row.userId);
       if (user && amount > 0) {
         credit(state, user, amount, 'tournament', { cup: cup.id, place: index + 1 });
-        user.stats.earned = round(user.stats.earned + amount);
-        state.prizes = round(state.prizes + amount);
       }
       row.place = index + 1;
       row.prize = amount;
@@ -1129,8 +1155,8 @@ export const PACKS = [
   { coins: 50, price: 50 },
 ];
 
-export const PURCHASE_TAX_PENCE = 230;
-export const CRYPTO_FEE_UNITS = 3;
+export const PURCHASE_TAX_PENCE = 120;
+export const CRYPTO_FEE_UNITS = 1.2;
 
 export function chargePence(tokens) {
   return Math.round(tokens * 100) + PURCHASE_TAX_PENCE;
@@ -1140,9 +1166,9 @@ export function cryptoPriceGbp(tokens) {
   return round(tokens + CRYPTO_FEE_UNITS);
 }
 
-export const CRYPTO_NETWORKS = ['Solana', 'Ethereum', 'Bitcoin'];
+export const CRYPTO_NETWORKS = ['Solana'];
 export const MIN_WITHDRAW = 15;
-export const WITHDRAW_FEE = 2.5;
+export const WITHDRAW_FEE = 3.15;
 const WITHDRAW_MS = 24 * 60 * 60 * 1000;
 
 export function tipQuote(user, amount) {
@@ -1190,6 +1216,11 @@ export function walletSnapshot(state, user) {
     txs: state.txs.filter((tx) => tx.userId === user.id).slice(0, 40),
     withdrawals: (state.withdrawals || []).filter((row) => row.userId === user.id).slice(0, 20).map(withdrawalDto),
     cashout: { deposited: totalDeposited(state, user), required: CASHOUT_DEPOSIT_MIN, unlocked: cashoutUnlocked(state, user) },
+    purchaseTax: PURCHASE_TAX_PENCE / 100,
+    cryptoFee: CRYPTO_FEE_UNITS,
+    withdrawFee: WITHDRAW_FEE,
+    minWithdraw: MIN_WITHDRAW,
+    cryptoNetworks: CRYPTO_NETWORKS,
   };
 }
 

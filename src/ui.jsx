@@ -257,7 +257,7 @@ export function WelcomeNotice() {
         <ul className="welcome-list">
           <li><b>Play for free.</b> Use your points to enter a Vault Points Kill Race or a hand of blackjack.</li>
           <li><b>Earn more.</b> Claim 1 point every day and win 5 for every token Kill Race win.</li>
-          <li><b>Win tokens.</b> The top 3 in the Weekly Vault win 8, 4 and 2 tokens every week.</li>
+          <li><b>Win tokens.</b> The top 3 in the Weekly Vault win 4, 2 and 1 tokens every week.</li>
         </ul>
         <div className="welcome-actions">
           <button className="btn" type="button" onClick={() => go('/play')}>Find a match</button>

@@ -36,8 +36,10 @@ import {
   isPointsMatch,
   matchPrize,
   refundEntry,
+  battleTokenProfit,
   potwLeaders,
   potwWindow,
+  recomputeBattleEarned,
   referralBonus,
   usedReferral,
   resolveMatch,
@@ -961,23 +963,16 @@ app.get(
     const now = Date.now();
     const zone = requestZone(req) || safeTimeZone(state.potw?.timeZone) || 'UTC';
     const window = calendarWindow(period, zone, now);
-    let rows;
-    if (!window) {
-      rows = state.users
-        .map((user) => ({ user: userDto(user, { online: online.has(user.id) }), value: user.stats.earned }))
-        .sort((a, b) => b.value - a.value);
-    } else {
-      const totals = new Map();
-      for (const row of state.history) {
-        if (row.at < window.start || row.at >= window.endsAt || !row.winnerId || row.practice || row.currency === 'points') continue;
-        const profit = Math.max(0, round((row.payout || 0) - row.entry));
-        totals.set(row.winnerId, round((totals.get(row.winnerId) || 0) + profit));
-      }
-      rows = state.users
-        .map((user) => ({ user: userDto(user, { online: online.has(user.id) }), value: totals.get(user.id) || 0 }))
-        .filter((row) => row.value > 0)
-        .sort((a, b) => b.value - a.value);
-    }
+    const start = window ? window.start : 0;
+    const endsAt = window ? window.endsAt : Number.POSITIVE_INFINITY;
+    const rows = state.users
+      .filter((user) => !user.npc)
+      .map((user) => ({
+        user: userDto(user, { online: online.has(user.id) }),
+        value: battleTokenProfit(state, user.id, start, endsAt),
+      }))
+      .filter((row) => row.value > 0)
+      .sort((a, b) => b.value - a.value);
     res.json({
       period,
       timeZone: zone,
@@ -2612,6 +2607,7 @@ server.listen(port, host, () => {
     closeFinishedMatches(state);
     releaseSupersededSparring(state);
     sparringCastWin(state);
+    recomputeBattleEarned(state);
   });
   console.log(`OGVAULT API on http://${host}:${port}`);
   setReviewSettleHook((matchId) => {
