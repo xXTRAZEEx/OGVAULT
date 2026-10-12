@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { creditNowPayment, cryptoPriceGbp } from './logic.js';
+import { CRYPTO_FEE_UNITS, creditNowPayment, cryptoPriceGbp } from './logic.js';
 import { fail, update } from './store.js';
 import { notifyPayment } from './discordAdmin.js';
 
@@ -37,7 +37,7 @@ export async function createNowInvoice({ user, amount, origin }) {
       price_amount: price,
       price_currency: 'gbp',
       order_id: orderId,
-      order_description: `${coinsLabel} Coins. Fee included £3`,
+      order_description: `${coinsLabel} Coins. Fee included £${Number(CRYPTO_FEE_UNITS).toFixed(2)}`,
       ipn_callback_url: 'https://api.ogvault.co.uk/api/nowpayments/ipn',
       success_url: `${origin}/wallet?checkout=success`,
       cancel_url: `${origin}/wallet?checkout=cancel`,
