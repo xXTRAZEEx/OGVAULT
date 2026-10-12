@@ -14,6 +14,7 @@ const NAV = [
   ['Shop', '/shop', ShopIcon],
   ['Wallet', '/wallet', WalletIcon],
   ['Rewards', '/rewards', GiftIcon],
+  ['Earn', '/earn', EarnIcon],
   ['Blackjack', '/blackjack', CardIcon],
 ];
 
@@ -577,6 +578,19 @@ function GiftIcon() {
         <path d="M3 7h18v4H3zM12 7v4" />
         <path d="M12 7c-2 0-3-2-2-3s3 0 2 3zM12 7c2 0 3-2 2-3s-3 0-2 3z" />
       </g>
+    </svg>
+  );
+}
+function EarnIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="ico ico-earn">
+      <g className="coin">
+        <circle cx="11" cy="13" r="6.5" />
+        <circle cx="11" cy="13" r="2.8" />
+        <path d="M11 8.2v1.5M11 16.3v1.5M6.2 13h1.5M14.3 13h1.5" />
+      </g>
+      <path className="spark" d="M18 4.5v4M16 6.5h4" />
+      <path className="spark tiny" d="M20.5 10v2.2M19.4 11.1h2.2" />
     </svg>
   );
 }

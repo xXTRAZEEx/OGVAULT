@@ -7,7 +7,7 @@ import { Home } from './pages/Home';
 import { Play } from './pages/Play';
 import { Match } from './pages/Match';
 import { Leaderboard, Potw } from './pages/Boards';
-import { Shop, Wallet, Rewards } from './pages/Economy';
+import { Shop, Wallet, Rewards, Earn } from './pages/Economy';
 import { Blackjack } from './pages/Blackjack';
 import { Friends, Profile, HowTo, Legal } from './pages/Social';
 
@@ -144,6 +144,7 @@ export default function App() {
           <Route path="/shop" element={<Shop />} />
           <Route path="/wallet" element={<Wallet />} />
           <Route path="/rewards" element={<Rewards />} />
+          <Route path="/earn" element={<Earn />} />
           <Route path="/blackjack" element={<Blackjack />} />
           <Route path="/friends" element={<Friends />} />
           <Route path="/how-to-play" element={<HowTo />} />

@@ -226,8 +226,8 @@ export function matchDto(state, match, viewerId) {
 
 const WEEK_MS = 7 * 86400000;
 export const POTW_PRIZES = [8, 4, 2];
-export const POINTS = { daily: 1, played: 0, win: 5 };
-const RANKED_POINT_TYPES = new Set(['daily', 'match', 'win']);
+export const POINTS = { daily: 1, played: 0, win: 5, status: 2 };
+const RANKED_POINT_TYPES = new Set(['daily', 'match', 'win', 'status']);
 
 export function creditPoints(state, user, amount, type, meta = {}) {
   if (!user || user.npc || !(amount > 0)) return 0;

@@ -25,7 +25,9 @@ import { disputeReviewChannelId } from './discord.js';
 import crypto from 'crypto';
 import {
   INVENTORY_GRANTS,
+  POINTS,
   credit,
+  creditPoints,
   debit,
   ensurePotw,
   joinRegister,
@@ -2021,6 +2023,7 @@ async function handleCommunityButton(interaction) {
 }
 
 const STATUS_RATE = 0.02;
+const STATUS_POINTS = POINTS.status;
 const STATUS_NEED_MS = 60 * 60 * 1000;
 const STATUS_TICK_MS = 5 * 60 * 1000;
 let presenceEnabled = false;
@@ -2073,6 +2076,7 @@ function tickStatusRewards() {
       user.statusMs = (user.statusMs || 0) + STATUS_TICK_MS;
       if (user.statusMs >= STATUS_NEED_MS && user.statusPaidDay !== day) {
         credit(state, user, STATUS_RATE, 'status', { note: 'discord-status' });
+        creditPoints(state, user, STATUS_POINTS, 'status', { note: 'discord-status' });
         user.statusPaidDay = day;
       }
     }
@@ -2101,7 +2105,7 @@ async function replyStatusRate(interaction) {
     content: [
       `**Live now** ${ids.length} member${ids.length === 1 ? '' : 's'} showing the status (${linked.length} linked to a site account)`,
       `**Your status** ${showsStatus(mine) ? 'Detected ✅' : `Not detected${mine ? ` (currently: "${customStatus(mine) || 'none'}", ${mine.status})` : ' (offline or invisible)'}`}`,
-      `**Paid today** ${paidToday} · rate ${STATUS_RATE} tokens a day after 1 hour with the status`,
+      `**Paid today** ${paidToday} · rate ${STATUS_RATE} tokens + ${STATUS_POINTS} Vault Points a day after 1 hour with the status`,
       names.length ? names.join('\n') : '',
     ].filter(Boolean).join('\n'),
     ephemeral: true,
@@ -2121,15 +2125,33 @@ async function replyOwnBalance(interaction) {
   });
 }
 
+export function earnStatus(user) {
+  const discordId = user?.discordId || '';
+  const presence = discordId ? statusGuild()?.presences.cache.get(discordId) : null;
+  const live = showsStatus(presence);
+  const day = statusDay();
+  const paid = !!user && user.statusPaidDay === day;
+  const minutes = user?.statusDay === day ? Math.floor((user.statusMs || 0) / 60000) : 0;
+  return {
+    rate: STATUS_RATE,
+    points: STATUS_POINTS,
+    needMinutes: 60,
+    presenceEnabled,
+    linked: !!discordId,
+    username: user?.username || null,
+    live,
+    paid,
+    minutes: Math.min(Math.max(0, minutes), 60),
+    keyword: 'ogvault.co.uk',
+  };
+}
+
 async function replyEarn(interaction) {
   const user = load().users.find((item) => !item.npc && item.discordId === interaction.user.id);
-  const presence = statusGuild()?.presences.cache.get(interaction.user.id);
-  const live = showsStatus(presence);
-  const paid = user?.statusPaidDay === statusDay();
-  const minutes = user?.statusDay === statusDay() ? Math.floor((user.statusMs || 0) / 60000) : 0;
+  const status = earnStatus(user);
   const embed = new EmbedBuilder()
     .setColor(0xf5c451)
-    .setTitle(`Earn ${STATUS_RATE} tokens a day`)
+    .setTitle(`Earn ${STATUS_RATE} tokens + ${STATUS_POINTS} Vault Points a day`)
     .setDescription([
       'Put **`ogvault.co.uk`** in your Discord custom status and keep it there for 1 hour.',
       '',
@@ -2142,12 +2164,12 @@ async function replyEarn(interaction) {
       '**Rules**',
       '• Your Discord must be linked to your OGVAULT account. Sign in with Discord at https://ogvault.co.uk',
       '• You must stay in this server.',
-      `• Pays ${STATUS_RATE} tokens once per day (resets at midnight UTC).`,
+      `• Pays ${STATUS_RATE} tokens and ${STATUS_POINTS} Vault Points once per day (resets at midnight UTC).`,
     ].join('\n'))
     .addFields(
-      { name: 'Account', value: user ? `Linked as ${user.username}` : 'Not linked yet', inline: true },
-      { name: 'Your status', value: live ? 'Detected ✅' : 'Not detected', inline: true },
-      { name: 'Today', value: paid ? 'Paid ✅' : `${Math.min(minutes, 60)} / 60 minutes`, inline: true },
+      { name: 'Account', value: status.linked ? `Linked as ${status.username}` : 'Not linked yet', inline: true },
+      { name: 'Your status', value: status.live ? 'Detected ✅' : 'Not detected', inline: true },
+      { name: 'Today', value: status.paid ? 'Paid ✅' : `${status.minutes} / 60 minutes`, inline: true },
     );
   await interaction.reply({ embeds: [embed], ephemeral: true });
 }
@@ -2575,7 +2597,7 @@ const COMMAND_GUIDE = [
   ['/unban', 'Clear a site ban so the player can sign in again.'],
   ['/balance', 'Anyone can see their own tokens and Vault Points. Owners can add a username to look up a player.'],
   ['/report', 'Anyone can report a member with a reason. Helpers get pinged in #filters and can Warn or Dismiss. 3 warnings in a week means a 1 hour timeout.'],
-  ['/earn', 'Anyone can see how to earn 0.02 tokens a day by putting ogvault.co.uk in their Discord status, and their progress today.'],
+  ['/earn', 'Anyone can see how to earn 0.02 tokens and 2 Vault Points a day by putting ogvault.co.uk in their Discord status, and their progress today.'],
   ['/announcements', 'Post a scrolling announcement on the site. It does not post in Discord.'],
   ['/live', 'Lock the whole site behind a launch page showing live Discord members against your goal (bots not counted). It opens by itself when the goal is hit.'],
   ['/match history', 'Every match a player has played: date, opponent, entry, project and region, who won, payout, forfeits, and who awarded disputes.'],

@@ -716,3 +716,87 @@ export function Rewards() {
     </div>
   );
 }
+
+export function Earn() {
+  const { me, setAuth } = useApp();
+  const [status, setStatus] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let stop = false;
+    const pull = () => {
+      api('/api/earn')
+        .then((data) => {
+          if (stop) return;
+          setStatus(data);
+          setError('');
+        })
+        .catch((err) => {
+          if (!stop) setError(err.message || 'Could not load earn status');
+        });
+    };
+    pull();
+    const id = setInterval(pull, 30000);
+    return () => { stop = true; clearInterval(id); };
+  }, [me?.id]);
+
+  const rate = status?.rate ?? 0.02;
+  const points = status?.points ?? 2;
+  const need = status?.needMinutes ?? 60;
+  const minutes = status?.minutes ?? 0;
+  const progress = Math.min(100, Math.round((minutes / need) * 100));
+
+  return (
+    <div className="stack-lg">
+      <PageHead
+        kicker="Discord status"
+        title="Earn"
+        text={`Put ogvault.co.uk in your Discord custom status for 1 hour and get ${rate} tokens plus ${points} Vault Points once a day.`}
+      />
+      {error && <p className="error">{error}</p>}
+      <div className="wallet-grid">
+        <article className="panel">
+          <h2>Account</h2>
+          <p className="earn-stat">{!me ? 'Sign in first' : status?.linked ? `Linked as ${status.username}` : 'Discord not linked'}</p>
+          <p className="muted">Sign in with Discord so the status can pay into your balance.</p>
+          {!me && <button className="btn" type="button" onClick={() => setAuth('in')}>Sign in</button>}
+          {me && !status?.linked && <button className="btn" type="button" onClick={() => setAuth('in')}>Link Discord</button>}
+        </article>
+        <article className="panel">
+          <h2>Your status</h2>
+          <p className={`earn-stat ${status?.live ? 'good' : ''}`}>{status?.live ? 'Detected ✅' : 'Not detected'}</p>
+          <p className="muted">Stay Online, Idle, or Do Not Disturb. Invisible does not count.</p>
+        </article>
+        <article className="panel">
+          <h2>Today</h2>
+          <p className={`earn-stat ${status?.paid ? 'good' : ''}`}>
+            {status?.paid ? 'Paid ✅' : `${minutes} / ${need} minutes`}
+          </p>
+          {!status?.paid && (
+            <div className="earn-bar" aria-hidden="true">
+              <i style={{ width: `${progress}%` }} />
+            </div>
+          )}
+          <p className="muted">Resets at midnight UTC. One payout per day.</p>
+        </article>
+      </div>
+      <section className="panel">
+        <h2>How to set it</h2>
+        <ol className="steps">
+          <li>Click your profile picture in the bottom left of Discord.</li>
+          <li>Click <b>Set Custom Status</b> (or <b>Edit Custom Status</b>).</li>
+          <li>Type <b>ogvault.co.uk</b> and set <b>Clear after</b> to <b>Don&apos;t clear</b>.</li>
+          <li>Keep Discord open in the OGVAULT server while the hour counts.</li>
+        </ol>
+      </section>
+      <section className="panel">
+        <h2>Rules</h2>
+        <ul className="steps">
+          <li>Your Discord must be linked to your OGVAULT account.</li>
+          <li>You must stay in the Discord server.</li>
+          <li>Pays <Amount value={rate} /> and <Points value={points} /> once per day after 1 hour with the status.</li>
+        </ul>
+      </section>
+    </div>
+  );
+}

@@ -58,7 +58,7 @@ import { checkoutOrigin, createCoinCheckout, handleStripeWebhook } from './check
 import { createNowInvoice, handleNowIpn } from './nowpayments.js';
 import { scanElims } from './cupScan.js';
 import { parseCupReplay } from './cupReplay.js';
-import { clearPublicChat, notifyWithdrawal, sendClipReview, setAnnouncementHook, setChatClearedHook, setOnlineCount, setReviewSettleHook, startDiscordAdmin, syncGoldVip, verifyDiscordMember } from './discordAdmin.js';
+import { clearPublicChat, earnStatus, notifyWithdrawal, sendClipReview, setAnnouncementHook, setChatClearedHook, setOnlineCount, setReviewSettleHook, startDiscordAdmin, syncGoldVip, verifyDiscordMember } from './discordAdmin.js';
 import {
   consumeDiscordState,
   createDiscordState,
@@ -127,6 +127,7 @@ app.use((req, res, next) => {
   }
   if (status.launch && (
     req.path === '/api/me'
+    || req.path === '/api/earn'
     || req.path === '/api/auth/discord'
     || req.path === '/api/auth/discord/start'
     || req.path === '/api/auth/discord/callback'
@@ -2261,6 +2262,15 @@ app.post(
       return { user: userDto(user, { self: true }), amount, points };
     });
     res.json(result);
+  })
+);
+
+app.get(
+  '/api/earn',
+  route((req, res) => {
+    const me = currentUser(req);
+    const user = me ? load().users.find((item) => item.id === me.id) : null;
+    res.json(earnStatus(user || null));
   })
 );
 
