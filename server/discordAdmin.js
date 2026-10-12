@@ -216,6 +216,11 @@ const commands = [
     .setName('earn')
     .setDescription('How to earn free tokens with your Discord status'),
   adminOnly(new SlashCommandBuilder()
+    .setName('announcements')
+    .setDescription('Post a scrolling announcement on the site')
+    .addStringOption((option) => option.setName('message').setDescription('What to announce').setRequired(true).setMaxLength(1500))
+    .addStringOption((option) => option.setName('title').setDescription('Short heading. Leave blank to use a capital first line.').setRequired(false).setMaxLength(80))),
+  adminOnly(new SlashCommandBuilder()
     .setName('staffapps')
     .setDescription('Open or close staff applications')
     .addStringOption((option) =>
@@ -1329,6 +1334,79 @@ export function setChatClearedHook(fn) {
 }
 
 let onlineCount = () => 0;
+let afterAnnouncement = () => {};
+export function setAnnouncementHook(fn) {
+  afterAnnouncement = typeof fn === 'function' ? fn : () => {};
+}
+
+function shapeAnnouncement(title, text) {
+  let body = String(text || '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').trim().slice(0, 1500);
+  body = body.replace(/([A-Z]{3,})([A-Z][a-z])/g, '$1\n$2');
+  if (!body.includes('\n')) body = body.replace(/([.!?])\s+(?=[A-Z])/g, '$1\n\n');
+  let heading = String(title || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80);
+  if (!heading) {
+    const [first, ...rest] = body.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+    if (rest.length && first && first.length <= 80 && first === first.toUpperCase()) {
+      heading = first;
+      body = rest.join('\n\n');
+    }
+  }
+  return { title: heading, text: body.trim() };
+}
+
+function announcementEmbed(row) {
+  const embed = new EmbedBuilder()
+    .setColor(0xf5c451)
+    .setAuthor({ name: 'OGVAULT  ·  ANNOUNCEMENT' })
+    .setDescription(row.text)
+    .setFooter({ text: 'ogvault.co.uk' })
+    .setTimestamp(row.at || Date.now());
+  if (row.title) embed.setTitle(row.title);
+  return embed;
+}
+
+function saveAnnouncement(title, text) {
+  const shaped = shapeAnnouncement(title, text);
+  if (!shaped.text) fail(400, 'Enter a message');
+  const row = update((state) => {
+    if (!Array.isArray(state.announcements)) state.announcements = [];
+    const item = { id: rid('ann'), title: shaped.title, text: shaped.text, at: Date.now() };
+    state.announcements.unshift(item);
+    state.announcements = state.announcements.slice(0, 20);
+    return item;
+  });
+  afterAnnouncement(row);
+  return row;
+}
+
+async function restyleLatestAnnouncement(guild) {
+  const current = (load().announcements || [])[0];
+  if (!current?.text) return;
+  const shaped = shapeAnnouncement(current.title, current.text);
+  const row = { ...current, title: shaped.title, text: shaped.text };
+  if (shaped.title !== (current.title || '') || shaped.text !== current.text) {
+    update((state) => {
+      const item = (state.announcements || []).find((entry) => entry.id === current.id);
+      if (item) {
+        item.title = shaped.title;
+        item.text = shaped.text;
+      }
+      return item || row;
+    });
+    afterAnnouncement(row);
+  }
+  const channels = await guild.channels.fetch();
+  const channel = channels.find((item) => item?.type === ChannelType.GuildText && item.name === 'announcements');
+  if (!channel?.isTextBased()) return;
+  const messages = await channel.messages.fetch({ limit: 8 });
+  const mine = messages.find((message) => message.author.id === guild.client.user.id && message.embeds[0] && !message.embeds[0].title);
+  if (mine) await mine.edit({ embeds: [announcementEmbed(row)] }).catch(() => {});
+}
+
+async function pushAnnouncement(_guild, title, text) {
+  return saveAnnouncement(title, text);
+}
+
 
 export function setOnlineCount(fn) {
   onlineCount = typeof fn === 'function' ? fn : () => 0;
@@ -2336,6 +2414,11 @@ async function handleCommand(interaction) {
       });
       return;
     }
+    if (interaction.commandName === 'announcements') {
+      const row = await pushAnnouncement(interaction.guild, interaction.options.getString('title'), interaction.options.getString('message'));
+      await interaction.reply({ content: 'Posted on the site.', ephemeral: true });
+      return row;
+    }
     if (interaction.commandName === 'staffapps') {
       const open = setStaffApps(interaction.options.getString('status'));
       await interaction.reply({
@@ -2493,7 +2576,7 @@ const COMMAND_GUIDE = [
   ['/balance', 'Anyone can see their own tokens and Vault Points. Owners can add a username to look up a player.'],
   ['/report', 'Anyone can report a member with a reason. Helpers get pinged in #filters and can Warn or Dismiss. 3 warnings in a week means a 1 hour timeout.'],
   ['/earn', 'Anyone can see how to earn 0.02 tokens a day by putting ogvault.co.uk in their Discord status, and their progress today.'],
-  ['/staffapps', 'Open or close staff applications. While closed, the support menu tells people we are not accepting any more.'],
+  ['/announcements', 'Post a scrolling announcement on the site. It does not post in Discord.'],
   ['/live', 'Lock the whole site behind a launch page showing live Discord members against your goal (bots not counted). It opens by itself when the goal is hit.'],
   ['/match history', 'Every match a player has played: date, opponent, entry, project and region, who won, payout, forfeits, and who awarded disputes.'],
   ['/check rate', 'Live count of members showing ogvault.co.uk in their Discord status, and whether yours is detected.'],
@@ -2969,6 +3052,7 @@ export function startDiscordAdmin(withPresence = true) {
     }
     try {
       const rest = new REST({ version: '10' }).setToken(token);
+      await restyleLatestAnnouncement(await client.guilds.fetch(guildId)).catch(() => {});
       await rest.put(Routes.applicationGuildCommands(client.user.id, guildId), { body: commands });
       console.log('Discord admin slash commands registered');
       await ensureReviewerRole(await client.guilds.fetch(guildId));
@@ -3003,7 +3087,7 @@ export function startDiscordAdmin(withPresence = true) {
       applyBotStatus();
       console.log('Reviewer role can read message history');
     } catch (error) {
-      console.error('Discord slash command registration failed', error.status || '');
+      console.error('Discord slash command registration failed', error.status || '', JSON.stringify(error.rawError || error.message || '').slice(0, 400));
     }
   });
   client.on('interactionCreate', (interaction) => {

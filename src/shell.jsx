@@ -18,7 +18,8 @@ const NAV = [
 ];
 
 export function Shell({ children }) {
-  const { me, setMe, activeMatchId, toast, auth, setAuth, chatOpen, setChatOpen, signOut, toasts, news, setNews, refreshMe } = useApp();
+  const { me, setMe, activeMatchId, toast, auth, setAuth, chatOpen, setChatOpen, signOut, toasts, news, setNews, refreshMe, announcement } = useApp();
+  const [hiddenAnn, setHiddenAnn] = useState(() => localStorage.getItem('ogv_ann') || '');
   const [q, setQ] = useState('');
   const [hits, setHits] = useState([]);
   const navigate = useNavigate();
@@ -62,8 +63,26 @@ export function Shell({ children }) {
     return () => clearTimeout(timer);
   }, [q]);
 
+  const annTitle = (announcement?.title || '').replace(/\s+/g, ' ').trim();
+  const annText = (announcement?.text || '').replace(/\s+/g, ' ').trim();
+  const showAnn = Boolean((annTitle || annText) && hiddenAnn !== announcement?.id);
+
   return (
-    <div className={`app ${chatOpen ? 'chat-open' : ''} ${slim ? 'rail-slim' : ''}`}>
+    <div className={`app ${chatOpen ? 'chat-open' : ''} ${slim ? 'rail-slim' : ''} ${showAnn ? 'has-ann' : ''}`}>
+      {showAnn && (
+        <div className="site-ann">
+          <div className="site-ann-track">
+            <p>
+              {annTitle ? <span className="site-ann-title">{annTitle}</span> : null}
+              {annTitle && annText ? <span className="site-ann-sep" aria-hidden="true">·</span> : null}
+              {annText ? <span className="site-ann-body">{annText}</span> : null}
+            </p>
+          </div>
+          <button type="button" aria-label="Dismiss announcement" onClick={() => { localStorage.setItem('ogv_ann', announcement.id); setHiddenAnn(announcement.id); }}>
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+          </button>
+        </div>
+      )}
       <aside className="rail">
         <NavLink to="/" className="rail-logo" aria-label="OGVAULT home">
           <VaultLogo />

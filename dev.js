@@ -5,7 +5,10 @@ import { fileURLToPath } from 'url';
 const root = path.dirname(fileURLToPath(import.meta.url));
 const viteBin = path.join(root, 'node_modules', 'vite', 'bin', 'vite.js');
 
-const api = spawn(process.execPath, ['server/index.js'], { stdio: 'inherit' });
+const api = spawn(process.execPath, ['server/index.js'], {
+  stdio: 'inherit',
+  env: { ...process.env, OGVAULT_LOCAL: '1' },
+});
 const web = spawn(process.execPath, [viteBin, '--host', '127.0.0.1', '--port', '5173'], {
   stdio: 'inherit',
 });

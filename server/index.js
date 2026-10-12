@@ -58,7 +58,7 @@ import { checkoutOrigin, createCoinCheckout, handleStripeWebhook } from './check
 import { createNowInvoice, handleNowIpn } from './nowpayments.js';
 import { scanElims } from './cupScan.js';
 import { parseCupReplay } from './cupReplay.js';
-import { clearPublicChat, notifyWithdrawal, sendClipReview, setChatClearedHook, setOnlineCount, setReviewSettleHook, startDiscordAdmin, syncGoldVip, verifyDiscordMember } from './discordAdmin.js';
+import { clearPublicChat, notifyWithdrawal, sendClipReview, setAnnouncementHook, setChatClearedHook, setOnlineCount, setReviewSettleHook, startDiscordAdmin, syncGoldVip, verifyDiscordMember } from './discordAdmin.js';
 import {
   consumeDiscordState,
   createDiscordState,
@@ -553,12 +553,18 @@ function assertAccountOpen(user) {
   if (user && user.banUntil > Date.now()) fail(403, 'This account is banned');
 }
 
+function latestAnnouncement(state) {
+  const row = (state.announcements || [])[0];
+  if (!row?.text) return null;
+  return { id: row.id, title: row.title || '', text: row.text, at: row.at };
+}
+
 function websiteStatus(state) {
   const backAt = Number(state.websiteBackAt) || 0;
   const offline = !!state.websiteOffline && (!backAt || backAt > Date.now());
   const reason = state.websiteReason === 'repair' ? 'Down for repair' : 'Down for maintenance';
   const gate = state.launchGate || {};
-  if (!offline && gate.enabled && gate.goal > 0) {
+  if (!offline && process.env.OGVAULT_LOCAL !== '1' && gate.enabled && gate.goal > 0) {
     return {
       offline: true,
       reason: 'Launching soon',
@@ -579,7 +585,10 @@ function assertPlay(user) {
   assertAccountOpen(user);
 }
 
-app.get('/api/health', route((_req, res) => res.json({ ok: true, website: websiteStatus(load()) })));
+app.get('/api/health', route((_req, res) => {
+  const state = load();
+  res.json({ ok: true, website: websiteStatus(state), announcement: latestAnnouncement(state) });
+}));
 
 app.get(
   '/api/home',
@@ -2600,6 +2609,7 @@ server.listen(port, host, () => {
     pingLobby();
   });
   setChatClearedHook(() => broadcast({ type: 'chatclear' }));
+  setAnnouncementHook((row) => broadcast({ type: 'announcement', announcement: row }));
   setOnlineCount(() => sockets.size);
   startDiscordAdmin();
 });
