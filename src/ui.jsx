@@ -329,7 +329,7 @@ export function PageHead({ kicker, title, text, children }) {
   );
 }
 
-export function LaunchGate({ goal, members, invite, account, ownerAsk, onEnter }) {
+export function LaunchGate({ goal, members, invite, account }) {
   const pct = goal > 0 ? Math.min(100, (members / goal) * 100) : 0;
   const left = Math.max(0, goal - members);
   const [error, setError] = useState('');
@@ -376,12 +376,6 @@ export function LaunchGate({ goal, members, invite, account, ownerAsk, onEnter }
         )}
         {error ? <p className="error">{error}</p> : null}
       </div>
-      {ownerAsk ? (
-        <div className="launch-ask">
-          <p>Open the site for this visit? Everyone else still sees this page.</p>
-          <button type="button" className="btn" onClick={onEnter}>Enter this visit</button>
-        </div>
-      ) : null}
     </section>
   );
 }

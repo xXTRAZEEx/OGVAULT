@@ -35,7 +35,6 @@ export default function App() {
   const [rev, setRev] = useState(0);
   const [news, setNews] = useState(() => localStorage.getItem('ogv_news') !== 'listings');
   const [website, setWebsite] = useState(null);
-  const [ownerVisit, setOwnerVisit] = useState(false);
 
   const toast = useCallback((text, kind = 'ok') => {
     const id = Math.random().toString(36).slice(2);
@@ -119,16 +118,7 @@ export default function App() {
     toast('Signed out');
   };
 
-  if (website?.offline && website.launch && !(me?.owner && ownerVisit)) {
-    return (
-      <LaunchGate
-        {...website.launch}
-        account={me?.discordName || me?.username || ''}
-        ownerAsk={!!me?.owner}
-        onEnter={() => setOwnerVisit(true)}
-      />
-    );
-  }
+  if (website?.offline && website.launch) return <LaunchGate {...website.launch} account={me?.discordName || me?.username || ''} />;
   if (website?.offline) return <WebsiteDown reason={website.reason} until={website.until} />;
 
   return (
