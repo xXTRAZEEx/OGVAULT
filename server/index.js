@@ -58,7 +58,7 @@ import { checkoutOrigin, createCoinCheckout, handleStripeWebhook } from './check
 import { createNowInvoice, handleNowIpn } from './nowpayments.js';
 import { scanElims } from './cupScan.js';
 import { parseCupReplay } from './cupReplay.js';
-import { clearPublicChat, notifyWithdrawal, sendClipReview, setChatClearedHook, setOnlineCount, setReviewSettleHook, startDiscordAdmin, syncGoldVip } from './discordAdmin.js';
+import { clearPublicChat, notifyWithdrawal, sendClipReview, setChatClearedHook, setOnlineCount, setReviewSettleHook, startDiscordAdmin, syncGoldVip, verifyDiscordMember } from './discordAdmin.js';
 import {
   consumeDiscordState,
   createDiscordState,
@@ -130,6 +130,7 @@ app.use((req, res, next) => {
     || req.path === '/api/auth/discord'
     || req.path === '/api/auth/discord/start'
     || req.path === '/api/auth/discord/callback'
+    || siteOwner(currentUser(req))
   )) {
     next();
     return;
@@ -229,6 +230,12 @@ function sendRouteError(res, error) {
   if (error.status) return res.status(error.status).json({ error: error.message });
   console.error(error);
   res.status(500).json({ error: 'Server error' });
+}
+
+function siteOwner(user) {
+  if (!user?.discordId) return false;
+  const ids = String(process.env.DISCORD_ADMIN_IDS || '').split(',').map((id) => id.trim()).filter(Boolean);
+  return ids.includes(String(user.discordId));
 }
 
 function currentUser(req) {
@@ -798,7 +805,10 @@ app.get(
         return;
       }
       const linked = load().users.find((item) => !item.npc && item.discordId === profile.id);
-      if (linked) syncGoldVip(linked).catch(() => {});
+      if (linked) {
+        syncGoldVip(linked).catch(() => {});
+        verifyDiscordMember(profile.id).catch(() => {});
+      }
       if (result.banned) {
         discordReturn(res, { discord_error: 'This account is banned' });
         return;
@@ -834,7 +844,7 @@ app.get(
     const fresh = state.users.find((item) => item.id === user.id);
     const match = activeMatch(state, user.id);
     res.json({
-      user: userDto(fresh, { self: true, online: true }),
+      user: { ...userDto(fresh, { self: true, online: true }), owner: siteOwner(fresh) },
       activeMatchId: match ? match.id : null,
     });
   })

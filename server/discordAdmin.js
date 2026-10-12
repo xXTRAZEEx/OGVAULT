@@ -2932,6 +2932,18 @@ async function publishCommandGuide(guild) {
 
 let statusTimer = null;
 
+export async function verifyDiscordMember(discordUserId) {
+  const id = String(discordUserId || '');
+  if (!bot?.isReady?.() || !/^\d{5,32}$/.test(id) || !/^\d{5,32}$/.test(guildId)) return false;
+  const guild = await bot.guilds.fetch(guildId);
+  const role = await roleByName(guild, 'Member');
+  if (!role) return false;
+  const member = await guild.members.fetch(id).catch(() => null);
+  if (!member) return false;
+  if (!member.roles.cache.has(role.id)) await member.roles.add(role, 'Preregistered on OGVAULT');
+  return true;
+}
+
 export function startDiscordAdmin(withPresence = true) {
   const token = String(process.env.DISCORD_BOT_TOKEN || '').trim();
   if (!token) {
