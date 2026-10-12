@@ -683,7 +683,7 @@ label input[type="number"]::-webkit-inner-spin-button {
   border-radius: 4px;
 }
 .discord-login { display: flex; flex-direction: column; gap: 8px; }
-.btn.discord { width: 100%; background: #5865F2; }
+.btn.discord { width: 100%; background: #5865F2; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .modal p.discord-note { margin: 0; color: var(--bad); font-weight: 700; }
 .auth-or {
   display: flex;
@@ -1493,6 +1493,12 @@ label .have { float: right; font-weight: 500; font-size: 12px; display: inline-f
 .launch-join { margin-top: 6px; }
 .launch-live { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.45); }
 .launch-live .dot { width: 8px; height: 8px; border-radius: 50%; background: #2ecc71; box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.6); animation: launch-pulse 1.6s infinite; }
+.launch-form { width: min(360px, 88vw); display: flex; flex-direction: column; gap: 10px; text-align: left; margin-top: 8px; }
+.launch-form-title { margin: 0; text-align: center; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; font-size: 12px; color: #f5c542; }
+.launch-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: rgba(255,255,255,0.7); }
+.launch-form input { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; color: #fff; padding: 10px 12px; font: inherit; }
+.launch-form .check { flex-direction: row; align-items: center; gap: 8px; }
+.launch-done { margin: 0; max-width: 420px; color: #fff; }
 @keyframes launch-pulse { 70% { box-shadow: 0 0 0 8px rgba(46, 204, 113, 0); } 100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); } }
 
 /* premium fx */
@@ -1586,4 +1592,37 @@ label .have { float: right; font-weight: 500; font-size: 12px; display: inline-f
 .cup-places { display: flex; flex-wrap: wrap; gap: 10px 16px; }
 .cup-places span { color: var(--text); font-size: 13px; }
 .cup-places b { color: var(--gold); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; margin-right: 4px; }
-.ico-cup path { fill: none; }
+.ico-podium .step { transform-origin: center bottom; }
+.ico-podium .s2 { transform-origin: 6.25px 21px; }
+.ico-podium .s1 { transform-origin: 12px 21px; }
+.ico-podium .s3 { transform-origin: 17.75px 21px; }
+.ico-podium .champ { fill: currentColor; }
+.rail nav a.active .ico-podium .s1 { animation: podium-champ 2.4s ease-in-out infinite; }
+.rail nav a:hover .ico-podium .s2 { animation: podium-up 700ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.rail nav a:hover .ico-podium .s1 { animation: podium-up 700ms 80ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.rail nav a:hover .ico-podium .s3 { animation: podium-up 700ms 160ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes podium-up {
+  0% { transform: translateY(6px) scaleY(0.2); opacity: 0.4; }
+  70% { transform: translateY(-1.5px) scaleY(1.08); opacity: 1; }
+  100% { transform: none; }
+}
+@keyframes podium-champ {
+  50% { transform: translateY(-1.5px); }
+}
+
+.cup-live-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 16px; align-items: start; }
+.cup-roster ul { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.cup-roster li { display: flex; align-items: center; gap: 8px; }
+.cup-roster li.you { color: #fff; }
+.cup-live-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.cup-drop { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; cursor: pointer; border-style: dashed; }
+.cup-drop.over { border-color: var(--blue); background: rgba(47, 107, 255, 0.08); }
+.cup-drop.busy { pointer-events: none; opacity: 0.9; }
+.cup-scan { width: 100%; }
+.cup-scan i { display: block; height: 6px; border-radius: 99px; background: linear-gradient(90deg, #2f6bff, #f5c542); }
+.cup-scan span { display: block; margin-top: 6px; color: var(--muted); font-size: 13px; }
+.cup-confirm { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+.cup-confirm input { width: 72px; }
+.cup-replay-players { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.cup-replay-players .btn { font-size: 12px; }
+@media (max-width: 900px) { .cup-live-grid { grid-template-columns: 1fr; } }

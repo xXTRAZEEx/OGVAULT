@@ -137,11 +137,13 @@ async function main() {
   const member = await ensureRole(roles, { name: 'Member', color: 0x5865f2, hoist: true, permissions: memberBits });
   const na = await ensureRole(roles, { name: 'NA', color: 0x3b82f6, hoist: true, mentionable: true, permissions: 0n });
   const eu = await ensureRole(roles, { name: 'EU', color: 0x22c55e, hoist: true, mentionable: true, permissions: 0n });
+  const eon = await ensureRole(roles, { name: 'Eon', color: 0x22c55e, hoist: true, mentionable: true, permissions: 0n });
+  const retrac = await ensureRole(roles, { name: 'Retrac', color: 0x3b82f6, hoist: true, mentionable: true, permissions: 0n });
   const reviewer = roles.find((role) => role.name === 'Reviewer');
   const creator = await ensureRole(roles, { name: 'Content Creator', color: 0xe84393, hoist: true, mentionable: true, permissions: 0n });
   const helper = await ensureRole(roles, { name: 'Helper', color: 0xe67e22, hoist: true, mentionable: true, permissions: 0n });
 
-  const ordered = [everyone, na, eu, member, creator, helper, reviewer, owner, bot].filter(Boolean);
+  const ordered = [everyone, na, eu, eon, retrac, member, creator, helper, reviewer, owner, bot].filter(Boolean);
   await api('PATCH', `/guilds/${guildId}/roles`, ordered.map((role, position) => ({ id: role.id, position })));
   console.log('roles ordered');
 
@@ -184,6 +186,7 @@ async function main() {
   const guide = await ensureText(channels, start, 'how-to-play', 'How an OGVAULT Kill Race works.', gateView);
   const verify = await ensureText(channels, start, 'verify', 'Link the Discord you use on OGVAULT.', gateView);
   const regions = await ensureText(channels, start, 'regions', 'Pick NA or EU.', gateView);
+  const projects = await ensureText(channels, start, 'project-roles', 'Pick Eon or Retrac.', gateView);
   const general = await ensureText(channels, community, 'general', 'Talk with other players.', memberChat);
   await ensureText(channels, community, 'clips', 'Post your match clips.', memberChat);
   await ensureText(channels, community, 'support', 'Ask for help with a lobby.', memberChat);
@@ -193,7 +196,7 @@ async function main() {
     ...[helper, reviewer, creator, na, eu].filter(Boolean).map((role) => overwrite(role.id, 0n, SEND)),
     overwrite(owner.id, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n),
   ]);
-  await ensureText(channels, news, 'tournaments', 'Live cups. Press Register to join.', [
+  await ensureText(channels, news, 'tournaments', 'Private games. Press Register to get a seat.', [
     overwrite(everyone.id, 0n, VIEW | SEND),
     overwrite(member.id, VIEW | HISTORY | REACTIONS, SEND),
     ...[helper, reviewer, creator, na, eu].filter(Boolean).map((role) => overwrite(role.id, 0n, SEND)),
@@ -219,7 +222,7 @@ async function main() {
 
   channels = await api('GET', `/guilds/${guildId}/channels`);
   const order = [
-    ['Start here', ['welcome', 'rules', 'how-to-play', 'verify', 'regions', 'support']],
+    ['Start here', ['welcome', 'rules', 'how-to-play', 'verify', 'regions', 'project-roles', 'support']],
     ['Community', ['general', 'clips', 'support']],
     ['News', ['announcements', 'tournaments']],
     ['Staff', null],
@@ -240,7 +243,7 @@ async function main() {
 
   const oldSupport = channels.find((item) => item.type === 0 && item.name === 'support' && item.id !== supportPanel.id && item.parent_id === start.id);
   if (oldSupport) await api('DELETE', `/channels/${oldSupport.id}`);
-  await postPanels({ welcome, rulesChannel, guide, verify, regions, supportPanel, announcements });
+  await postPanels({ welcome, rulesChannel, guide, verify, regions, projects, supportPanel, announcements });
   console.log('ready', general.name);
 }
 
@@ -257,6 +260,7 @@ async function postPanelsOnly() {
     guide: text(start, 'how-to-play'),
     verify: text(start, 'verify'),
     regions: text(start, 'regions'),
+    projects: text(start, 'project-roles'),
     supportPanel: text(start, 'support') || text(category('Community'), 'support'),
     announcements: text(news, 'announcements'),
   };
@@ -266,7 +270,7 @@ async function postPanelsOnly() {
   console.log('panels updated');
 }
 
-async function postPanels({ welcome, rulesChannel, guide, verify, regions, supportPanel, announcements }) {
+async function postPanels({ welcome, rulesChannel, guide, verify, regions, projects, supportPanel, announcements }) {
   await upsertMessage(welcome.id, {
     embeds: [{
       author,
@@ -282,7 +286,7 @@ async function postPanels({ welcome, rulesChannel, guide, verify, regions, suppo
         { name: '⚔️  1v1 Kill Races', value: 'Most kills in one game takes the pot.', inline: true },
         { name: '🪙  Vault Tokens', value: 'Real pots. Winner takes the pot.', inline: true },
         { name: '⭐  Vault Points', value: 'Free to earn. Top 3 each week win tokens.', inline: true },
-        { name: 'Get started', value: '**1.** Read <#' + rulesChannel.id + '>\n**2.** Link your account in <#' + verify.id + '>\n**3.** Pick your region in <#' + regions.id + '>' },
+        { name: 'Get started', value: '**1.** Read <#' + rulesChannel.id + '>\n**2.** Link your account in <#' + verify.id + '>\n**3.** Pick your region in <#' + regions.id + '>\n**4.** Pick Eon or Retrac in <#' + projects.id + '>' },
       ],
       footer,
     }],
@@ -336,7 +340,7 @@ async function postPanels({ welcome, rulesChannel, guide, verify, regions, suppo
       author,
       title: 'Choose Your Region',
       description: [
-        'Pick where you play so you can find opponents with the best ping.',
+        'Select your region',
         divider,
         '🇺🇸  **NA** · North America',
         '🇪🇺  **EU** · Europe',
@@ -354,6 +358,29 @@ async function postPanels({ welcome, rulesChannel, guide, verify, regions, suppo
       ],
     }],
   }, ['Pick your region']);
+  if (projects) await upsertMessage(projects.id, {
+    embeds: [{
+      author,
+      title: 'Choose Your Project',
+      description: [
+        'Pick the client you play. Tournament signups only accept the matching role.',
+        divider,
+        '**Eon**',
+        '**Retrac**',
+        '',
+        '-# You can switch any time.',
+      ].join('\n'),
+      color: GOLD,
+      footer,
+    }],
+    components: [{
+      type: 1,
+      components: [
+        { type: 2, style: 3, label: 'Eon', custom_id: 'ogvault:project:eon' },
+        { type: 2, style: 1, label: 'Retrac', custom_id: 'ogvault:project:retrac' },
+      ],
+    }],
+  }, ['Pick your project']);
   if (supportPanel) await upsertMessage(supportPanel.id, {
     embeds: [{
       author,

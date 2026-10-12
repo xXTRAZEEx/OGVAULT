@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { apiUrl } from './api';
 
 export function Select({ value, onChange, options, label }) {
   const [open, setOpen] = useState(false);
@@ -328,9 +329,27 @@ export function PageHead({ kicker, title, text, children }) {
   );
 }
 
-export function LaunchGate({ goal, members, invite }) {
+export function LaunchGate({ goal, members, invite, account }) {
   const pct = goal > 0 ? Math.min(100, (members / goal) * 100) : 0;
   const left = Math.max(0, goal - members);
+  const [error, setError] = useState('');
+
+  async function startDiscord() {
+    setError('');
+    try {
+      const res = await fetch(apiUrl('/api/auth/discord/start'), { headers: { Accept: 'application/json' } });
+      const data = await res.json().catch(() => ({}));
+      const url = typeof data.url === 'string' ? data.url.trim() : '';
+      if (res.ok && url.startsWith('https://discord.com/')) {
+        window.location.assign(url);
+        return;
+      }
+      setError(data.error || 'Discord login is not configured');
+    } catch {
+      setError('Discord login is unavailable');
+    }
+  }
+
   return (
     <section className="website-down launch-gate">
       <img src="/logo.png" alt="OGVAULT" />
@@ -343,6 +362,20 @@ export function LaunchGate({ goal, members, invite }) {
       <p className="launch-note">{left > 0 ? `${left.toLocaleString()} more to go. Bring your friends.` : 'Goal reached. Opening now.'}</p>
       {invite ? <a className="btn launch-join" href={invite} target="_blank" rel="noreferrer">Join the Discord</a> : null}
       <p className="launch-live"><span className="dot" /> Live count, bots not included</p>
+      <div className="launch-form">
+        <p className="launch-form-title">Preregister</p>
+        {account ? (
+          <p className="launch-done"><strong>{account}</strong> is linked. This Discord account is ready when the site opens.</p>
+        ) : (
+          <button type="button" className="btn discord" onClick={startDiscord}>
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M19.27 5.33A16.4 16.4 0 0 0 15.2 4l-.4.82a14.7 14.7 0 0 1 3.63 1.4 15.3 15.3 0 0 0-12.86 0A13.5 13.5 0 0 1 9.2 4.82L8.8 4a16.5 16.5 0 0 0-4.08 1.33C2.2 8.55 1.5 11.68 1.7 14.78A16.8 16.8 0 0 0 7 17.3l.72-1.12a11 11 0 0 1-1.78-.86l.45-.35c3.55 1.64 7.4 1.64 10.92 0l.45.35c-.57.35-1.16.64-1.78.86L16.7 17.3a16.8 16.8 0 0 0 5.3-2.52c.28-3.55-.55-6.65-2.73-9.45ZM8.78 13.4c-.98 0-1.78-.9-1.78-2s.8-2 1.78-2 1.8.9 1.8 2-.8 2-1.8 2Zm6.44 0c-.98 0-1.78-.9-1.78-2s.78-2 1.78-2 1.8.9 1.8 2-.8 2-1.8 2Z" />
+            </svg>
+            Continue with Discord
+          </button>
+        )}
+        {error ? <p className="error">{error}</p> : null}
+      </div>
     </section>
   );
 }

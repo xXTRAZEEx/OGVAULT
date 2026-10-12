@@ -18,6 +18,11 @@ import {
   debit,
   ensureCups,
   joinCup,
+  startCup,
+  seedTestCup,
+  resetTestCup,
+  applyCupElims,
+  tickTestCupScores,
   cupKind,
   cupKindLabel,
   ensurePotw,
@@ -51,6 +56,8 @@ import { assertCleanUsername, offensiveName } from './names.js';
 import { IP_MESSAGE, VPN_MESSAGE, assertIpFree, claimIp, clientIp, ipOwner, isVpn, ownsIp } from './guard.js';
 import { checkoutOrigin, createCoinCheckout, handleStripeWebhook } from './checkout.js';
 import { createNowInvoice, handleNowIpn } from './nowpayments.js';
+import { scanElims } from './cupScan.js';
+import { parseCupReplay } from './cupReplay.js';
 import { clearPublicChat, notifyWithdrawal, sendClipReview, setChatClearedHook, setOnlineCount, setReviewSettleHook, startDiscordAdmin, syncGoldVip } from './discordAdmin.js';
 import {
   consumeDiscordState,
@@ -115,6 +122,15 @@ app.use((req, res, next) => {
   }
   const status = websiteStatus(load());
   if (!status.offline) {
+    next();
+    return;
+  }
+  if (status.launch && (
+    req.path === '/api/me'
+    || req.path === '/api/auth/discord'
+    || req.path === '/api/auth/discord/start'
+    || req.path === '/api/auth/discord/callback'
+  )) {
     next();
     return;
   }
@@ -290,6 +306,11 @@ function clipFile(matchId, userId) {
   return path.join(__dirname, 'uploads', matchId, `${userId}.mp4`);
 }
 
+function cupClipFile(cupId, userId, filename = '') {
+  const ext = String(filename || '').toLowerCase().endsWith('.replay') ? '.replay' : '.mp4';
+  return path.join(__dirname, 'uploads', 'cups', cupId, `${userId}-${Date.now()}${ext}`);
+}
+
 function safeClipName(name) {
   const base = path.basename(String(name || 'clip.mp4')).replace(/[^\w.\- ()]/g, '').slice(0, 80);
   return base.toLowerCase().endsWith('.mp4') ? base : 'clip.mp4';
@@ -384,6 +405,7 @@ function cupSummary(state, cup) {
         place: row.place || index + 1,
         points: row.points,
         plays: row.plays,
+        elims: row.elims || 0,
         prize: row.prize || 0,
         user: user ? userDto(user, { online: online.has(user.id) }) : null,
       };
@@ -398,6 +420,7 @@ function cupSummary(state, cup) {
     maxPlayers: cup.maxPlayers || 0,
     endsAt: cup.endsAt,
     paidOut: cup.paidOut,
+    started: !!cup.startedAt,
     kind: cupKind(cup),
     kindLabel: cupKindLabel(cupKind(cup)),
     players: cup.board.length,
@@ -964,7 +987,11 @@ app.get(
 app.get(
   '/api/tournaments',
   route((_req, res) => {
-    update((state) => ensureCups(state));
+    update((state) => {
+      seedTestCup(state);
+      tickTestCupScores(state);
+      ensureCups(state);
+    });
     const state = load();
     res.json({ tournaments: state.tournaments.map((cup) => cupSummary(state, cup)) });
   })
@@ -973,7 +1000,11 @@ app.get(
 app.get(
   '/api/tournaments/:id',
   route((req, res) => {
-    update((state) => ensureCups(state));
+    update((state) => {
+      seedTestCup(state);
+      tickTestCupScores(state);
+      ensureCups(state);
+    });
     const state = load();
     const cup = state.tournaments.find((item) => item.id === req.params.id);
     if (!cup) fail(404, 'Cup not found');
@@ -1000,6 +1031,149 @@ app.post(
     res.json(result);
   })
 );
+
+app.post(
+  '/api/tournaments/:id/start',
+  route((req, res) => {
+    const me = requireUser(req);
+    const result = update((state) => {
+      const user = state.users.find((item) => item.id === me.id);
+      const cup = startCup(state, req.params.id);
+      return { tournament: cupSummary(state, cup), user: userDto(user, { self: true }), joined: cup.board.some((row) => row.userId === user.id) };
+    });
+    pingLobby();
+    res.json(result);
+  })
+);
+
+app.post(
+  '/api/tournaments/:id/reset',
+  route((req, res) => {
+    requireUser(req);
+    if (req.params.id !== 'cup_testlocal') fail(400, 'Only the local test cup can be reset');
+    const result = update((state) => {
+      const cup = resetTestCup(state);
+      return { tournament: cupSummary(state, cup) };
+    });
+    pingLobby();
+    res.json(result);
+  })
+);
+
+app.post('/api/tournaments/:id/clip', (req, res) => {
+  let me;
+  try {
+    me = requireUser(req);
+    const type = String(req.headers['content-type'] || '');
+    if (!type.includes('multipart/form-data')) fail(400, 'Upload an MP4 or a .replay');
+    const state = load();
+    const cup = state.tournaments.find((item) => item.id === req.params.id);
+    if (!cup) fail(404, 'Cup not found');
+    if (!cup.startedAt || cup.paidOut || Date.now() > cup.endsAt) fail(400, 'That cup is not live');
+    if (!cup.board.some((row) => row.userId === me.id)) fail(400, 'Register and wait for the cup to start first');
+  } catch (error) {
+    return sendRouteError(res, error);
+  }
+
+  const bb = busboy({ headers: req.headers, limits: { files: 1, fileSize: CLIP_BYTES } });
+  let rejected = '';
+  let saved = null;
+  let dest = cupClipFile(req.params.id, me.id);
+  let tmp = `${dest}.part`;
+
+  bb.on('file', (_name, stream, info) => {
+    const mime = String(info.mimeType || '');
+    const filename = String(info.filename || '');
+    const replay = filename.toLowerCase().endsWith('.replay');
+    const video = filename.toLowerCase().endsWith('.mp4') || mime === 'video/mp4';
+    if (!replay && !video) {
+      rejected = 'MP4 or .replay only';
+      stream.resume();
+      return;
+    }
+    dest = cupClipFile(req.params.id, me.id, filename);
+    tmp = `${dest}.part`;
+    if (saved) {
+      stream.resume();
+      return;
+    }
+    fs.mkdirSync(path.dirname(tmp), { recursive: true });
+    const out = fs.createWriteStream(tmp);
+    stream.pipe(out);
+    saved = new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (truncated) => {
+        if (settled) return;
+        settled = true;
+        resolve({ filename, truncated });
+      };
+      stream.on('limit', () => {
+        rejected = 'File too large';
+        out.destroy();
+        stream.resume();
+        finish(true);
+      });
+      out.on('finish', () => finish(!!stream.truncated));
+      out.on('error', reject);
+      stream.on('error', reject);
+    });
+  });
+
+  bb.on('error', (error) => sendRouteError(res, error));
+  bb.on('close', async () => {
+    try {
+      if (rejected) {
+        fs.rmSync(tmp, { force: true });
+        fail(rejected.includes('large') ? 413 : 400, rejected);
+      }
+      if (!saved) fail(400, 'Drop an MP4 or a .replay of your match');
+      const file = await saved;
+      if (file.truncated) {
+        fs.rmSync(tmp, { force: true });
+        fail(413, 'That file is too large');
+      }
+      fs.rmSync(dest, { force: true });
+      fs.renameSync(tmp, dest);
+      const hinted = Math.max(0, Math.min(80, Math.round(Number(req.query.elims) || 0)));
+      const replay = String(file.filename || dest).toLowerCase().endsWith('.replay');
+      let scanned;
+      if (replay) {
+        const aliases = [me.username, me.discordUsername, me.discordGlobalName, req.query.ign];
+        scanned = await parseCupReplay(fs.readFileSync(dest), aliases);
+        if (!hinted) {
+          return res.json({
+            tournament: cupSummary(load(), load().tournaments.find((item) => item.id === req.params.id)),
+            joined: true,
+            confirm: true,
+            scan: scanned,
+          });
+        }
+      } else {
+        scanned = await scanElims(dest);
+      }
+      const elims = hinted || scanned.elims || 0;
+      const note = hinted
+        ? `Confirmed ${hinted} elimination${hinted === 1 ? '' : 's'}.`
+        : scanned.note;
+      const result = update((state) => {
+        const user = state.users.find((item) => item.id === me.id);
+        const applied = applyCupElims(state, user, req.params.id, elims, note);
+        return {
+          tournament: cupSummary(state, applied.cup),
+          user: userDto(user, { self: true }),
+          joined: true,
+          scan: { elims: applied.extra, note, method: scanned.method },
+        };
+      });
+      pingLobby();
+      res.json(result);
+    } catch (error) {
+      fs.rmSync(tmp, { force: true });
+      sendRouteError(res, error);
+    }
+  });
+  req.pipe(bb);
+});
 
 app.post(
   '/api/tournaments/:id/leave',

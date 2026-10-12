@@ -28,9 +28,7 @@ import {
   credit,
   debit,
   ensurePotw,
-  joinCup,
-  cupKind,
-  cupKindLabel,
+  joinRegister,
   grantInventoryItem,
   grantsAvailable,
   inventoryItems,
@@ -39,9 +37,17 @@ import {
 } from './logic.js';
 import { blackjackBiasPercent, setBlackjackBias } from './blackjack.js';
 import { fail, isVip, load, rid, round, update } from './store.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
+let projectEmojis = { eon: null, retrac: null };
 
 const GOLD_VIP_ROLE_NAME = 'GOLD VIP';
 const GOLD_VIP_COLOR = 0xf5c451;
+const TOURNAMENT_ROLE_NAME = 'Tournament';
+const TOURNAMENT_ROLE_COLOR = 0xf5c542;
 const REVIEWER_CHANNEL_ID = '1556086496207962122';
 const REVIEWER_ROLE_NAME = 'Reviewer';
 const REVIEWER_COLOR = 0x57f287;
@@ -54,25 +60,45 @@ function adminOnly(builder) {
 const commands = [
   adminOnly(new SlashCommandBuilder()
     .setName('tournament')
-    .setDescription('Create a site tournament'))
+    .setDescription('Host or end a private tournament'))
     .addSubcommand((sub) =>
       sub
         .setName('create')
-        .setDescription('Open a cup players can join on the site')
-        .addStringOption((option) => option.setName('name').setDescription('Cup name').setRequired(true).setMaxLength(80))
+        .setDescription('Post a signup embed in #tournaments')
+        .addStringOption((option) => option.setName('name').setDescription('Tournament name').setRequired(true).setMaxLength(80))
+        .addNumberOption((option) => option.setName('time').setDescription('How long registration stays open').setRequired(true).setMinValue(1))
         .addStringOption((option) =>
-          option.setName('type').setDescription('Kill Race or Scrim').setRequired(true)
-            .addChoices({ name: 'Kill Race', value: 'killrace' }, { name: 'Scrim', value: 'scrim' })
+          option.setName('unit').setDescription('Minutes or hours').setRequired(true)
+            .addChoices({ name: 'Minutes', value: 'minutes' }, { name: 'Hours', value: 'hours' })
         )
-        .addNumberOption((option) => option.setName('hours').setDescription('How long the tournament stays open').setRequired(true).setMinValue(0.01))
-        .addNumberOption((option) => option.setName('entry').setDescription('Entry fee in tokens').setRequired(true).setMinValue(0))
-        .addNumberOption((option) => option.setName('first').setDescription('1st place prize in tokens').setRequired(true).setMinValue(0))
-        .addNumberOption((option) => option.setName('second').setDescription('2nd place prize in tokens').setRequired(true).setMinValue(0))
-        .addNumberOption((option) => option.setName('third').setDescription('3rd place prize in tokens').setRequired(true).setMinValue(0))
-        .addIntegerOption((option) =>
-          option.setName('players').setDescription('Maximum players (default 100)').setRequired(false).setMinValue(3).setMaxValue(100)
+        .addIntegerOption((option) => option.setName('slots').setDescription('How many players can register').setRequired(true).setMinValue(1).setMaxValue(100))
+        .addNumberOption((option) => option.setName('duration').setDescription('How long the tournament lasts after signup closes').setRequired(true).setMinValue(1))
+        .addStringOption((option) =>
+          option.setName('duration_unit').setDescription('Tournament length unit').setRequired(true)
+            .addChoices({ name: 'Minutes', value: 'minutes' }, { name: 'Hours', value: 'hours' })
         )
+        .addNumberOption((option) => option.setName('entry').setDescription('Entry fee in site tokens (0 is free)').setRequired(true).setMinValue(0))
+        .addStringOption((option) => option.setName('prize').setDescription('Prize — type anything').setRequired(true).setMaxLength(200))
+        .addStringOption((option) =>
+          option.setName('project').setDescription('Eon or Retrac — only that role can register').setRequired(true)
+            .addChoices({ name: 'Eon', value: 'Eon' }, { name: 'Retrac', value: 'Retrac' })
+        )
+        .addStringOption((option) =>
+          option.setName('region').setDescription('NA or EU — only that role can register').setRequired(true)
+            .addChoices({ name: 'NA', value: 'NA' }, { name: 'EU', value: 'EU' })
+        )
+        .addStringOption((option) => option.setName('note').setDescription('Extra info for the embed').setRequired(false).setMaxLength(200))
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('end')
+        .setDescription('End a tournament now — close signup and clear Tournament roles')
+        .addStringOption((option) => option.setName('name').setDescription('Leave blank to end the latest open one').setRequired(false).setMaxLength(80))
     ),
+  adminOnly(new SlashCommandBuilder()
+    .setName('code')
+    .setDescription('DM the game code to everyone with the Tournament role')
+    .addStringOption((option) => option.setName('code').setDescription('The private game code').setRequired(true).setMaxLength(80))),
   adminOnly(new SlashCommandBuilder()
     .setName('purge')
     .setDescription('Delete every message in this Discord channel')),
@@ -189,6 +215,13 @@ const commands = [
   new SlashCommandBuilder()
     .setName('earn')
     .setDescription('How to earn free tokens with your Discord status'),
+  adminOnly(new SlashCommandBuilder()
+    .setName('staffapps')
+    .setDescription('Open or close staff applications')
+    .addStringOption((option) =>
+      option.setName('status').setDescription('Accept new staff applications or stop them').setRequired(true)
+        .addChoices({ name: 'Open', value: 'open' }, { name: 'Closed', value: 'closed' })
+    )),
   adminOnly(new SlashCommandBuilder()
     .setName('live')
     .setDescription('Lock the site behind a launch page until the Discord reaches a member goal')
@@ -428,25 +461,42 @@ function clearSessions(state, userId) {
 
 function createTournament(options) {
   const name = String(options.getString('name') || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80);
-  const kind = options.getString('type') === 'scrim' ? 'scrim' : 'killrace';
-  const players = options.getInteger('players') || 100;
+  const note = String(options.getString('note') || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 200);
+  const prizeText = String(options.getString('prize') || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 200);
+  const amount = Number(options.getNumber('time'));
+  const unit = options.getString('unit') === 'minutes' ? 'minutes' : 'hours';
+  const slots = Math.round(Number(options.getInteger('slots')));
   const entry = money(options.getNumber('entry'));
-  const length = hours(options.getNumber('hours'));
-  const places = [money(options.getNumber('first')), money(options.getNumber('second')), money(options.getNumber('third'))];
-  if (!name) fail(400, 'Enter a cup name');
-  if (!Number.isInteger(players) || players < 3 || players > 100) fail(400, 'Players must be between 3 and 100');
+  if (!name) fail(400, 'Enter a name');
+  if (!prizeText) fail(400, 'Enter a prize');
+  if (!Number.isFinite(amount) || amount < 1) fail(400, 'Enter how long registration stays open');
+  if (!Number.isInteger(slots) || slots < 1 || slots > 100) fail(400, 'Slots must be between 1 and 100');
+  const openMs = unit === 'minutes' ? amount * 60 * 1000 : amount * 60 * 60 * 1000;
+  const durationAmount = Number(options.getNumber('duration'));
+  const durationUnit = options.getString('duration_unit') === 'minutes' ? 'minutes' : 'hours';
+  if (!Number.isFinite(durationAmount) || durationAmount < 1) fail(400, 'Enter how long the tournament lasts');
+  const durationMs = durationUnit === 'minutes' ? durationAmount * 60 * 1000 : durationAmount * 60 * 60 * 1000;
+  const project = options.getString('project') === 'Retrac' ? 'Retrac' : 'Eon';
+  const region = options.getString('region') === 'EU' ? 'EU' : 'NA';
+  const started = Date.now();
+  const endsAt = started + openMs;
+  const eventEndsAt = endsAt + durationMs;
   return update((state) => {
     if (!Array.isArray(state.tournaments)) state.tournaments = [];
     const cup = {
       id: rid('cup'),
       name,
-      kind,
-      blurb: `${cupKindLabel(kind)}. Up to ${players} players. Entry ${entry}. Prizes ${places.join(' / ')} for 1st, 2nd, and 3rd.`,
+      kind: 'signup',
+      project,
+      region,
+      blurb: note || 'Private game. The host will spectate.',
+      prizeText,
       entry,
-      prize: round(places[0] + places[1] + places[2]),
-      places,
-      maxPlayers: players,
-      endsAt: Date.now() + length * 60 * 60 * 1000,
+      prize: 0,
+      places: [],
+      maxPlayers: slots,
+      endsAt,
+      eventEndsAt,
       paidOut: false,
       board: [],
     };
@@ -455,7 +505,23 @@ function createTournament(options) {
   });
 }
 
-const SITE = 'https://ogvault.co.uk';
+function endTournaments(name) {
+  const query = String(name || '').trim().toLowerCase();
+  return update((state) => {
+    const now = Date.now();
+    const live = (state.tournaments || []).filter((cup) => !cup.paidOut && now < cupEventEnd(cup));
+    const match = query
+      ? live.filter((cup) => String(cup.name || '').toLowerCase().includes(query))
+      : live.slice(0, 1);
+    if (!match.length) fail(400, query ? 'No open tournament by that name.' : 'No open tournament to end.');
+    for (const cup of match) {
+      cup.paidOut = true;
+      cup.endsAt = now;
+      cup.eventEndsAt = now;
+    }
+    return match;
+  });
+}
 
 async function ensureTournamentsChannel(guild) {
   const channels = await guild.channels.fetch();
@@ -479,43 +545,56 @@ async function ensureTournamentsChannel(guild) {
     name: 'tournaments',
     type: ChannelType.GuildText,
     parent: news?.id,
-    topic: 'Live OGVAULT cups. Press Register to join.',
+    topic: 'Private games. Press Register to get a seat.',
     permissionOverwrites: overwrites,
   });
 }
 
 function tournamentEmbed(cup) {
-  const kind = cupKind(cup);
   const open = !cup.paidOut && Date.now() < cup.endsAt;
-  const places = Array.isArray(cup.places) ? cup.places : [];
-  const prize = (index, label) => (places[index] != null ? `**${label}**  ${places[index]} tokens` : null);
-  const fields = [
-    { name: 'Type', value: cupKindLabel(kind), inline: true },
-    { name: 'Entry', value: cup.entry > 0 ? `${cup.entry} tokens` : 'Free', inline: true },
-    { name: 'Players', value: cup.maxPlayers ? `${cup.board.length}/${cup.maxPlayers}` : String(cup.board.length), inline: true },
-    { name: 'Ends', value: `<t:${Math.floor(cup.endsAt / 1000)}:R>`, inline: true },
-    { name: 'Prizes', value: [prize(0, '1st'), prize(1, '2nd'), prize(2, '3rd')].filter(Boolean).join('\n') || `${cup.prize} tokens`, inline: false },
-  ];
-  return new EmbedBuilder()
-    .setAuthor({ name: 'OGVAULT Tournaments' })
+  const full = !!(cup.maxPlayers && cup.board.length >= cup.maxPlayers);
+  const names = (cup.board || []).map((row) => (row.discordId ? `<@${row.discordId}>` : row.name)).filter(Boolean);
+  const note = cup.blurb && cup.blurb !== 'Private game. The host will spectate.' ? cup.blurb : '';
+  const project = cup.project === 'Retrac' ? 'Retrac' : 'Eon';
+  const region = cup.region === 'EU' ? 'EU' : cup.region === 'NA' ? 'NA' : '';
+  const color = !open || full ? 0x2b2b30 : project === 'Retrac' ? 0x3b82f6 : 0x22c55e;
+  const seats = cup.maxPlayers ? `${cup.board.length}/${cup.maxPlayers}` : String(cup.board.length);
+  const embed = new EmbedBuilder()
+    .setAuthor({ name: `${project.toUpperCase()}${region ? `  ·  ${region}` : ''}  ·  PRIVATE TABLE` })
     .setTitle(cup.name)
-    .setURL(`${SITE}/tournaments/${cup.id}`)
-    .setColor(open ? 0xf5c542 : 0x5865f2)
-    .setDescription(open
-      ? (kind === 'scrim'
-        ? 'Register below. Play **scrims** (including practice listings) to score points.'
-        : 'Register below. Play **Kill Races** on the site to score points.')
-      : 'This cup is closed.')
-    .addFields(fields)
-    .setFooter({ text: open ? 'Linked site account required to register' : 'Results are paid on the site' })
-    .setTimestamp(new Date(cup.endsAt));
+    .setColor(color)
+    .setDescription(note || 'Private lobby. Host spectates and names the winner.')
+    .addFields(
+      { name: 'Prize', value: cup.prizeText || 'TBA', inline: true },
+      { name: 'Entry', value: cup.entry > 0 ? `${cup.entry} tokens` : 'Free', inline: true },
+      { name: 'Seats', value: seats, inline: true },
+      ...(region ? [{ name: 'Region', value: region, inline: true }] : []),
+      { name: 'Signup', value: `<t:${Math.floor(cup.endsAt / 1000)}:R>`, inline: true },
+      { name: 'Goes live', value: `<t:${Math.floor(cup.endsAt / 1000)}:R>`, inline: true },
+      { name: 'Over', value: `<t:${Math.floor((cup.eventEndsAt || cup.endsAt) / 1000)}:R>`, inline: true },
+    )
+    .setFooter({ text: open ? (full ? 'Roster full' : `${project}${region ? ` · ${region}` : ''} role + linked OGVAULT account`) : 'Closed' });
+  if (names.length) {
+    embed.addFields({
+      name: 'In',
+      value: names.slice(0, 12).join(' · ') + (names.length > 12 ? `  +${names.length - 12}` : ''),
+    });
+  }
+  return embed;
+}
+
+function signupOpen(cup) {
+  return !cup.paidOut && Date.now() < cup.endsAt && !(cup.maxPlayers && cup.board.length >= cup.maxPlayers);
 }
 
 function tournamentComponents(cup) {
-  const open = !cup.paidOut && Date.now() < cup.endsAt && !(cup.maxPlayers && cup.board.length >= cup.maxPlayers);
+  const open = signupOpen(cup);
   return [new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`ogvault:cup:join:${cup.id}`).setLabel('Register').setStyle(ButtonStyle.Success).setDisabled(!open),
-    new ButtonBuilder().setLabel('Open on site').setStyle(ButtonStyle.Link).setURL(`${SITE}/tournaments/${cup.id}`),
+    new ButtonBuilder()
+      .setCustomId(`ogvault:cup:join:${cup.id}`)
+      .setLabel(open ? 'Reserve seat' : (cup.maxPlayers && cup.board.length >= cup.maxPlayers ? 'Roster full' : 'Closed'))
+      .setStyle(open ? ButtonStyle.Success : ButtonStyle.Secondary)
+      .setDisabled(!open),
   )];
 }
 
@@ -557,30 +636,291 @@ async function syncTournamentPosts(guild) {
   return channel;
 }
 
+async function ensureTournamentRole(guild) {
+  await guild.roles.fetch();
+  let role = guild.roles.cache.find((item) => item.name === TOURNAMENT_ROLE_NAME);
+  if (!role) {
+    role = await guild.roles.create({
+      name: TOURNAMENT_ROLE_NAME,
+      color: TOURNAMENT_ROLE_COLOR,
+      hoist: false,
+      mentionable: true,
+      reason: 'Temporary signup role for private games',
+    });
+  }
+  const me = guild.members.me || await guild.members.fetchMe().catch(() => null);
+  if (me && role.id !== me.roles.highest.id && role.comparePositionTo(me.roles.highest) >= 0) {
+    await role.setPosition(Math.max(1, me.roles.highest.position - 1)).catch(() => {});
+  }
+  return role;
+}
+
+function cupEventEnd(cup) {
+  return cup.eventEndsAt || cup.endsAt;
+}
+
+function projectRoleNames(project) {
+  return project === 'Retrac' ? ['Retrac'] : ['Eon', 'EON'];
+}
+
+function memberHasProject(member, project) {
+  const names = new Set(projectRoleNames(project));
+  return member.roles.cache.some((role) => names.has(role.name));
+}
+
+function memberHasRegion(member, region) {
+  return member.roles.cache.some((role) => role.name === region);
+}
+
+function projectEmoji(name) {
+  return projectEmojis[String(name || '').toLowerCase()] || null;
+}
+
+function projectLabel(name) {
+  const emoji = projectEmoji(name);
+  return emoji ? `${emoji} **${name}**` : `**${name}**`;
+}
+
+async function ensureProjectEmojis(guild) {
+  await guild.emojis.fetch().catch(() => {});
+  for (const spec of [
+    { key: 'eon', name: 'eon', file: path.join(SERVER_DIR, 'assets', 'eon.png') },
+    { key: 'retrac', name: 'retrac', file: path.join(SERVER_DIR, 'assets', 'retrac.png') },
+  ]) {
+    let emoji = guild.emojis.cache.find((item) => item.name === spec.name);
+    if (!emoji && fs.existsSync(spec.file)) {
+      emoji = await guild.emojis.create({ attachment: spec.file, name: spec.name, reason: 'OGVAULT project icon' }).catch(() => null);
+    }
+    projectEmojis[spec.key] = emoji || null;
+  }
+  return projectEmojis;
+}
+
+function applyProjectButtonEmoji(button, name) {
+  const emoji = projectEmoji(name);
+  if (emoji) button.setEmoji({ id: emoji.id, name: emoji.name });
+  return button;
+}
+
+async function ensureProjectRoles(guild) {
+  await guild.roles.fetch();
+  for (const spec of [
+    { name: 'Eon', color: 0x22c55e },
+    { name: 'Retrac', color: 0x3b82f6 },
+  ]) {
+    const exists = guild.roles.cache.find((role) => role.name === spec.name || (spec.name === 'Eon' && role.name === 'EON'));
+    if (exists) continue;
+    await guild.roles.create({
+      name: spec.name,
+      color: spec.color,
+      hoist: true,
+      mentionable: true,
+      reason: 'OGVAULT project role',
+    }).catch(() => {});
+  }
+}
+
+async function refreshRegionsCopy(guild) {
+  const channels = await guild.channels.fetch();
+  const regions = channels.find((channel) => channel.type === ChannelType.GuildText && channel.name === 'regions');
+  if (!regions?.isTextBased()) return;
+  const messages = await regions.messages.fetch({ limit: 20 });
+  const mine = messages.find((message) => (
+    message.author.id === guild.client.user.id
+    && message.embeds.some((embed) => embed.title === 'Choose Your Region')
+  ));
+  const embed = mine?.embeds[0];
+  if (!mine || !embed) return;
+  const next = EmbedBuilder.from(embed);
+  const description = String(embed.description || '').replace(
+    /^Pick where you play so you can find opponents with the best ping\./,
+    'Select your region',
+  );
+  if (description === embed.description) return;
+  next.setDescription(description);
+  await mine.edit({ embeds: [next] });
+}
+
+async function refreshVerifyPanel(guild) {
+  const channels = await guild.channels.fetch();
+  const verify = channels.find((channel) => channel.type === ChannelType.GuildText && channel.name === 'verify');
+  if (!verify?.isTextBased()) return;
+  const messages = await verify.messages.fetch({ limit: 25 });
+  const mine = messages.find((message) => (
+    message.author.id === guild.client.user.id
+    && message.components.some((row) => row.components.some((item) => String(item.customId || '').startsWith('ogvault:verify')))
+  ));
+  if (!mine) return;
+  await mine.edit({
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('ogvault:verify').setLabel('Link my account').setStyle(ButtonStyle.Success).setEmoji('🔗'),
+        new ButtonBuilder().setCustomId('ogvault:verify:password').setLabel('Link with password').setStyle(ButtonStyle.Primary).setEmoji('🔑'),
+      ),
+    ],
+  });
+}
+
+async function ensureProjectRolesChannel(guild) {
+  await ensureProjectRoles(guild);
+  await ensureProjectEmojis(guild);
+  const channels = await guild.channels.fetch();
+  const start = channels.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === 'Start here');
+  const regions = channels.find((channel) => channel.type === ChannelType.GuildText && channel.name === 'regions');
+  let channel = channels.find((channel) => channel.type === ChannelType.GuildText && channel.name === 'project-roles');
+  if (!channel) {
+    channel = await guild.channels.create({
+      name: 'project-roles',
+      type: ChannelType.GuildText,
+      parent: start?.id,
+      topic: 'Pick Eon or Retrac.',
+      permissionOverwrites: [
+        { id: guild.roles.everyone.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] },
+        { id: guild.members.me.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] },
+      ],
+    });
+  } else if (start && channel.parentId !== start.id) {
+    await channel.setParent(start.id).catch(() => {});
+  }
+  if (regions) await channel.setPosition(regions.rawPosition + 1).catch(() => {});
+  const payload = {
+    embeds: [
+      new EmbedBuilder()
+        .setAuthor({ name: 'OGVAULT' })
+        .setTitle('Choose Your Project')
+        .setColor(0xd4af37)
+        .setDescription(`Pick the client you play. Tournament signups only accept the matching role.\n\n${projectLabel('Eon')}\n${projectLabel('Retrac')}\n\n-# You can switch any time.`),
+    ],
+    components: [
+      new ActionRowBuilder().addComponents(
+        applyProjectButtonEmoji(new ButtonBuilder().setCustomId('ogvault:project:eon').setLabel('Eon').setStyle(ButtonStyle.Success), 'Eon'),
+        applyProjectButtonEmoji(new ButtonBuilder().setCustomId('ogvault:project:retrac').setLabel('Retrac').setStyle(ButtonStyle.Primary), 'Retrac'),
+      ),
+    ],
+  };
+  const messages = await channel.messages.fetch({ limit: 20 });
+  const mine = messages.find((message) => (
+    message.author.id === guild.client.user.id
+    && message.components.some((row) => row.components.some((item) => String(item.customId || '').startsWith('ogvault:project:')))
+  ));
+  if (mine) await mine.edit(payload);
+  else await channel.send(payload);
+  return channel;
+}
+
+function boardDiscordIds(cups) {
+  const ids = new Set();
+  for (const cup of cups || []) {
+    for (const row of cup.board || []) {
+      if (row.discordId) ids.add(String(row.discordId));
+    }
+  }
+  return [...ids];
+}
+
+function registeredDiscordIds() {
+  const cups = load().tournaments || [];
+  const live = cups.filter((cup) => !cup.paidOut && Date.now() < cupEventEnd(cup));
+  return boardDiscordIds(live.length ? live : cups.slice(0, 1));
+}
+
+async function clearTournamentRoles(guild, ids) {
+  const role = await ensureTournamentRole(guild);
+  const targets = new Set((ids || boardDiscordIds(load().tournaments)).map(String));
+  for (const member of guild.members.cache.values()) {
+    if (member.roles.cache.has(role.id) && !member.user.bot) targets.add(member.id);
+  }
+  let cleared = 0;
+  for (const id of targets) {
+    const member = await guild.members.fetch(id).catch(() => null);
+    if (!member?.roles.cache.has(role.id)) continue;
+    try {
+      await member.roles.remove(role, 'Tournament ended');
+      cleared += 1;
+    } catch { /* role is above the bot */ }
+  }
+  return cleared;
+}
+
+async function sweepTournamentSignups(guild) {
+  await syncTournamentPosts(guild);
+  const now = Date.now();
+  const keep = new Set();
+  const drop = new Set();
+  for (const cup of load().tournaments || []) {
+    const live = !cup.paidOut && now < cupEventEnd(cup);
+    for (const row of cup.board || []) {
+      if (!row.discordId) continue;
+      if (live) keep.add(String(row.discordId));
+      else drop.add(String(row.discordId));
+    }
+  }
+  const extra = [...guild.members.cache.values()]
+    .filter((member) => member.roles.cache.some((role) => role.name === TOURNAMENT_ROLE_NAME) && !keep.has(member.id))
+    .map((member) => member.id);
+  await clearTournamentRoles(guild, [...drop, ...extra].filter((id) => !keep.has(id)));
+}
+
 async function handleCupRegister(interaction) {
   const cupId = String(interaction.customId || '').slice('ogvault:cup:join:'.length);
   if (!cupId) {
-    await interaction.reply({ content: 'That cup is not valid.', ephemeral: true });
+    await interaction.reply({ content: 'That signup is not valid.', ephemeral: true });
     return;
+  }
+  const listed = (load().tournaments || []).find((item) => item.id === cupId);
+  if ((listed?.project || listed?.region) && interaction.guild) {
+    const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => interaction.member);
+    if (listed.project && (!member || !memberHasProject(member, listed.project))) {
+      await interaction.reply({
+        content: `This table is **${listed.project}** only. Pick **${listed.project}** in #project-roles first.`,
+        ephemeral: true,
+      });
+      return;
+    }
+    if (listed.region && (!member || !memberHasRegion(member, listed.region))) {
+      await interaction.reply({
+        content: `This table is **${listed.region}** only. Pick **${listed.region}** in #regions first.`,
+        ephemeral: true,
+      });
+      return;
+    }
   }
   let cup;
   try {
-    cup = update((state) => {
-      const user = state.users.find((item) => !item.npc && String(item.discordId || '') === interaction.user.id);
-      if (!user) fail(400, 'Link your OGVAULT account in #verify first, then press Register again.');
-      return joinCup(state, user, cupId);
-    });
+    cup = update((state) => joinRegister(state, cupId, interaction.user));
   } catch (error) {
+    if (interaction.guild) await refreshTournamentPost(interaction.guild, cupId).catch(() => {});
     await interaction.reply({ content: error.status ? error.message : 'Could not register you.', ephemeral: true });
     return;
   }
+  if (interaction.guild && interaction.member) {
+    const role = await ensureTournamentRole(interaction.guild);
+    await interaction.member.roles.add(role).catch(() => {});
+  }
   await interaction.reply({
     content: cup.entry > 0
-      ? `You are in **${cup.name}**. ${cup.entry} tokens were taken as the entry.`
-      : `You are in **${cup.name}**.`,
+      ? `You are registered for **${cup.name}**. ${cup.entry} tokens were taken from your site balance. The Tournament role stays until the event ends.`
+      : `You are registered for **${cup.name}**. The Tournament role stays until the event ends.`,
     ephemeral: true,
   });
   if (interaction.guild) await refreshTournamentPost(interaction.guild, cupId);
+}
+
+async function sendTournamentCode(guild, code) {
+  const ids = registeredDiscordIds();
+  let sent = 0;
+  let failed = 0;
+  for (const id of ids) {
+    try {
+      const member = await guild.members.fetch(id);
+      if (member.user.bot) continue;
+      await member.send(`**OGVAULT** — your private game code:\n\`${code}\``);
+      sent += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  return { sent, failed, total: ids.length };
 }
 
 function banAccount(username, lengthHours) {
@@ -1228,6 +1568,20 @@ const STAFF_ROLES = {
   helper: { name: 'Helper', duty: 'Answer tickets, help players, and moderate chat and voice.' },
 };
 
+const STAFF_APPS_CLOSED = 'Sorry, we are not accepting any more staff applications.';
+
+function staffAppsOpen() {
+  return load().staffAppsOpen !== false;
+}
+
+function setStaffApps(status) {
+  const open = status === 'open';
+  return update((state) => {
+    state.staffAppsOpen = open;
+    return open;
+  });
+}
+
 function staffRolePicker() {
   return {
     embeds: [new EmbedBuilder()
@@ -1429,6 +1783,10 @@ async function handleTicket(interaction, id) {
     await interaction.reply({ content: 'Pick one of the issues in the list.', ephemeral: true });
     return;
   }
+  if (kind === 'staff' && !staffAppsOpen()) {
+    await interaction.reply({ content: STAFF_APPS_CLOSED, ephemeral: true });
+    return;
+  }
   await interaction.deferReply({ ephemeral: true });
   const channels = await guild.channels.fetch();
   const topic = kind === 'staff' ? `ticket:${interaction.user.id}:staff` : `ticket:${interaction.user.id}`;
@@ -1566,6 +1924,21 @@ async function handleCommunityButton(interaction) {
     if (previous) await interaction.member.roles.remove(previous).catch(() => {});
     await interaction.member.roles.add(chosen);
     await interaction.reply({ content: `Region set to ${pick}.`, ephemeral: true });
+    return;
+  }
+  if (id === 'ogvault:project:eon' || id === 'ogvault:project:retrac') {
+    const pick = id.endsWith(':eon') ? 'Eon' : 'Retrac';
+    const other = pick === 'Eon' ? 'Retrac' : 'Eon';
+    await ensureProjectRoles(guild);
+    const chosen = guild.roles.cache.find((role) => projectRoleNames(pick).includes(role.name));
+    const previous = guild.roles.cache.find((role) => projectRoleNames(other).includes(role.name));
+    if (!chosen) {
+      await interaction.reply({ content: 'That project role is missing.', ephemeral: true });
+      return;
+    }
+    if (previous) await interaction.member.roles.remove(previous).catch(() => {});
+    await interaction.member.roles.add(chosen);
+    await interaction.reply({ content: `Project set to ${pick}.`, ephemeral: true });
   }
 }
 
@@ -1839,11 +2212,42 @@ async function handleCommand(interaction) {
       await interaction.reply({ content: `Deleted **${removed}**.`, ephemeral: true });
       return;
     }
-    if (interaction.commandName === 'tournament' && interaction.options.getSubcommand() === 'create') {
+    if (interaction.commandName === 'tournament') {
+      if (interaction.options.getSubcommand() === 'end') {
+        const closed = endTournaments(interaction.options.getString('name'));
+        for (const cup of closed) {
+          await refreshTournamentPost(interaction.guild, cup.id).catch(() => {});
+        }
+        const stripped = await clearTournamentRoles(interaction.guild, boardDiscordIds(closed));
+        await sweepTournamentSignups(interaction.guild).catch(() => {});
+        await interaction.reply({
+          content: closed.length === 1
+            ? `Ended **${closed[0].name}**. Cleared the Tournament role from ${stripped} member${stripped === 1 ? '' : 's'}.`
+            : `Ended ${closed.length} tournaments. Cleared the Tournament role from ${stripped} member${stripped === 1 ? '' : 's'}.`,
+          ephemeral: true,
+        });
+        return;
+      }
+      await clearTournamentRoles(interaction.guild).catch(() => {});
       const cup = createTournament(interaction.options);
       await postTournament(interaction.guild, cup).catch(() => {});
       await interaction.reply({
-        content: `${cupKindLabel(cupKind(cup))} **${cup.name}** is live in #tournaments until <t:${Math.floor(cup.endsAt / 1000)}:f>.`,
+        content: `**${cup.name}** (${cup.project} · ${cup.region}) is in #tournaments. ${cup.maxPlayers} slots. Signup closes <t:${Math.floor(cup.endsAt / 1000)}:R>. Event starts then and ends <t:${Math.floor(cupEventEnd(cup) / 1000)}:R>.`,
+        ephemeral: true,
+      });
+      return;
+    }
+    if (interaction.commandName === 'code') {
+      const code = String(interaction.options.getString('code') || '').trim();
+      if (!code) {
+        await interaction.reply({ content: 'Enter a code.', ephemeral: true });
+        return;
+      }
+      const result = await sendTournamentCode(interaction.guild, code);
+      await interaction.reply({
+        content: result.total
+          ? `Sent to ${result.sent} player${result.sent === 1 ? '' : 's'} with the Tournament role${result.failed ? `. ${result.failed} could not be DMed.` : '.'}`
+          : 'Nobody has the Tournament role. They need to Register first.',
         ephemeral: true,
       });
       return;
@@ -1928,6 +2332,16 @@ async function handleCommand(interaction) {
       const result = userBalance(interaction.options.getString('username'));
       await interaction.reply({
         content: `${result.username} has ${Number(result.balance).toFixed(2)} tokens and ${result.points} Vault Points.`,
+        ephemeral: true,
+      });
+      return;
+    }
+    if (interaction.commandName === 'staffapps') {
+      const open = setStaffApps(interaction.options.getString('status'));
+      await interaction.reply({
+        content: open
+          ? 'Staff applications are open.'
+          : 'Staff applications are closed. New applicants will be told we are not accepting any more.',
         ephemeral: true,
       });
       return;
@@ -2079,6 +2493,7 @@ const COMMAND_GUIDE = [
   ['/balance', 'Anyone can see their own tokens and Vault Points. Owners can add a username to look up a player.'],
   ['/report', 'Anyone can report a member with a reason. Helpers get pinged in #filters and can Warn or Dismiss. 3 warnings in a week means a 1 hour timeout.'],
   ['/earn', 'Anyone can see how to earn 0.02 tokens a day by putting ogvault.co.uk in their Discord status, and their progress today.'],
+  ['/staffapps', 'Open or close staff applications. While closed, the support menu tells people we are not accepting any more.'],
   ['/live', 'Lock the whole site behind a launch page showing live Discord members against your goal (bots not counted). It opens by itself when the goal is hit.'],
   ['/match history', 'Every match a player has played: date, opponent, entry, project and region, who won, payout, forfeits, and who awarded disputes.'],
   ['/check rate', 'Live count of members showing ogvault.co.uk in their Discord status, and whether yours is detected.'],
@@ -2092,7 +2507,9 @@ const COMMAND_GUIDE = [
   ['/stats', 'Show live players, registered users, open lobbies, games, tokens, and withdrawals.'],
   ['/tokens add', 'Add tokens to one site account.'],
   ['/tokens remove', 'Remove tokens from one site account.'],
-  ['/tournament create', 'Host a Kill Race or Scrim cup: length, entry, 1st / 2nd / 3rd prizes. It posts in #tournaments with a Register button.'],
+  ['/tournament create', 'Post a signup embed in #tournaments. Set signup time, event duration, slots, entry, and prize. Register gives a Tournament role until the event ends.'],
+  ['/tournament end', 'Close a tournament now, lock Register, and clear Tournament roles. Leave name blank to end the latest one.'],
+  ['/code', 'DM a private game code to everyone who has the Tournament role.'],
   ['/website', 'Take the whole site offline for repair or maintenance, with an optional countdown, or bring it back online.'],
   ['/withdrawals list', 'List pending token withdrawal requests.'],
 ];
@@ -2560,11 +2977,17 @@ export function startDiscordAdmin(withPresence = true) {
       announceWeeklyResults().catch(() => console.error('Weekly Vault announcement failed'));
       setInterval(() => { announceWeeklyResults().catch(() => console.error('Weekly Vault announcement failed')); }, 5 * 60 * 1000);
       await ensureVoiceChannels(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up voice channels'));
-      await syncTournamentPosts(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up tournaments'));
+      await ensureTournamentRole(await client.guilds.fetch(guildId)).catch(() => {});
+      await ensureProjectRoles(await client.guilds.fetch(guildId)).catch(() => console.error('Could not create Eon/Retrac roles'));
+      await ensureProjectEmojis(await client.guilds.fetch(guildId)).catch(() => console.error('Could not upload project emojis'));
+      await ensureProjectRolesChannel(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up project-roles'));
+      await refreshVerifyPanel(await client.guilds.fetch(guildId)).catch(() => {});
+      await refreshRegionsCopy(await client.guilds.fetch(guildId)).catch(() => {});
+      await sweepTournamentSignups(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up tournaments'));
       setInterval(() => {
         const guild = client.guilds.cache.get(guildId);
-        if (guild) syncTournamentPosts(guild).catch(() => {});
-      }, 5 * 60 * 1000);
+        if (guild) sweepTournamentSignups(guild).catch(() => {});
+      }, 60 * 1000);
       applyBotStatus();
       console.log('Reviewer role can read message history');
     } catch (error) {
@@ -2578,13 +3001,20 @@ export function startDiscordAdmin(withPresence = true) {
         interaction.reply({ content: 'Pick one of the issues in the list.', ephemeral: true }).catch(() => {});
         return;
       }
-      if (kind === 'staff') interaction.reply(staffRolePicker()).catch(() => {});
+      if (kind === 'staff') {
+        if (!staffAppsOpen()) interaction.reply({ content: STAFF_APPS_CLOSED, ephemeral: true }).catch(() => {});
+        else interaction.reply(staffRolePicker()).catch(() => {});
+      }
       else interaction.showModal(ticketModal(kind)).catch(() => {});
       return;
     }
     if (interaction.isButton() && String(interaction.customId || '').startsWith('ogvault:staffapp:')) {
       const role = interaction.customId.split(':').pop();
       if (!STAFF_ROLES[role]) return;
+      if (!staffAppsOpen()) {
+        interaction.reply({ content: STAFF_APPS_CLOSED, ephemeral: true }).catch(() => {});
+        return;
+      }
       interaction.showModal(ticketModal('staff', role)).catch(() => {});
       return;
     }

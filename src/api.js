@@ -82,3 +82,21 @@ export async function api(path, { method = 'GET', body } = {}) {
   }
   return data;
 }
+
+export async function apiUpload(path, file, query = '') {
+  const token = localStorage.getItem('ogv_token');
+  const body = new FormData();
+  body.append('file', file, file.name || 'clip.mp4');
+  const res = await fetch(apiUrl(`${path}${query}`), {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const error = new Error(data.error || 'Upload failed');
+    error.status = res.status;
+    throw error;
+  }
+  return data;
+}

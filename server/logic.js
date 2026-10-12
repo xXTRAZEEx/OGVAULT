@@ -388,7 +388,7 @@ export function ensurePotw(state, timeZone) {
 export function ensureCups(state) {
   let changed = false;
   for (const cup of state.tournaments) {
-    if (cup.paidOut || Date.now() < cup.endsAt) continue;
+    if (cup.paidOut || !cup.startedAt || Date.now() < cup.endsAt) continue;
     const eligible = cup.board
       .filter((row) => row.plays > 0)
       .sort((a, b) => b.points - a.points);
@@ -444,7 +444,7 @@ export function cupKindLabel(kind) {
 function addCupPoints(state, userId, match, score) {
   if (isPointsMatch(match)) return;
   for (const cup of state.tournaments) {
-    if (cup.paidOut || Date.now() > cup.endsAt) continue;
+    if (cup.paidOut || !cup.startedAt || Date.now() > cup.endsAt) continue;
     if (cupKind(cup) === 'killrace' && match.practice) continue;
     const row = cup.board.find((item) => item.userId === userId);
     if (!row) continue;
@@ -454,17 +454,176 @@ function addCupPoints(state, userId, match, score) {
   }
 }
 
+export function joinRegister(state, cupId, member) {
+  ensureCups(state);
+  const cup = state.tournaments.find((item) => item.id === cupId);
+  if (!cup) fail(404, 'That signup is closed');
+  if (cup.paidOut || Date.now() > cup.endsAt) fail(400, 'Registration is closed');
+  if (cup.maxPlayers && cup.board.length >= cup.maxPlayers) fail(400, 'Registration is full');
+  const discordId = String(member.id || '');
+  const user = state.users.find((item) => !item.npc && String(item.discordId || '') === discordId);
+  if (!user) fail(400, 'Link your Discord to your OGVAULT account in #verify first, then press Register again.');
+  if (cup.board.some((row) => row.discordId === discordId || row.userId === user.id)) fail(400, 'You are already registered');
+  if (cup.entry > 0) debit(state, user, cup.entry, 'entry', { cup: cup.id });
+  cup.prize = round((cup.prize || 0) + (cup.entry || 0));
+  cup.board.push({
+    userId: user.id,
+    discordId,
+    name: user.username || member.username || 'Player',
+    points: 0,
+    plays: 0,
+  });
+  return cup;
+}
+
 export function joinCup(state, user, cupId) {
   ensureCups(state);
   const cup = state.tournaments.find((item) => item.id === cupId);
   if (!cup) fail(404, 'Cup not found');
   if (cup.paidOut || Date.now() > cup.endsAt) fail(400, 'That cup is closed');
+  if (cup.startedAt) fail(400, 'That cup has already started');
   if (cup.maxPlayers && cup.board.length >= cup.maxPlayers) fail(400, 'That cup is full');
   if (cup.board.some((row) => row.userId === user.id)) fail(400, 'You are already in');
   if (cup.entry > 0) debit(state, user, cup.entry, 'entry', { cup: cup.id });
   if (!Array.isArray(cup.places)) cup.prize = round(cup.prize + cup.entry);
   cup.board.push({ userId: user.id, points: 0, plays: 0 });
   return cup;
+}
+
+export function startCup(state, cupId) {
+  ensureCups(state);
+  const cup = state.tournaments.find((item) => item.id === cupId);
+  if (!cup) fail(404, 'Cup not found');
+  if (cup.paidOut) fail(400, 'That cup is closed');
+  if (cup.startedAt) fail(400, 'That cup has already started');
+  if (!cup.board.length) fail(400, 'Need at least one player before you start');
+  const length = cup.durationMs > 0 ? cup.durationMs : 2 * 60 * 60 * 1000;
+  cup.startedAt = Date.now();
+  cup.endsAt = Date.now() + length;
+  cup.lastBoardAt = Date.now();
+  return cup;
+}
+
+export function resetTestCup(state) {
+  seedTestCup(state);
+  const cup = (state.tournaments || []).find((item) => item.id === 'cup_testlocal');
+  if (!cup) fail(404, 'Cup not found');
+  cup.startedAt = 0;
+  cup.paidOut = false;
+  cup.durationMs = 2 * 60 * 60 * 1000;
+  cup.endsAt = Date.now() + 7 * 86400000;
+  cup.lastBoardAt = 0;
+  for (const row of cup.board) {
+    row.points = 0;
+    row.plays = 0;
+    row.elims = 0;
+    row.prize = 0;
+    row.place = 0;
+    row.lastScan = null;
+  }
+  return cup;
+}
+
+export function applyCupElims(state, user, cupId, elims, note) {
+  const cup = state.tournaments.find((item) => item.id === cupId);
+  if (!cup) fail(404, 'Cup not found');
+  if (cup.paidOut || !cup.startedAt || Date.now() > cup.endsAt) fail(400, 'That cup is not live');
+  const row = cup.board.find((item) => item.userId === user.id);
+  if (!row) fail(400, 'You are not in this cup');
+  const extra = Math.max(0, Math.min(80, Math.round(Number(elims) || 0)));
+  if (!extra) fail(400, 'The scan did not find any eliminations');
+  row.elims = Math.round((row.elims || 0) + extra);
+  row.points = round((row.points || 0) + extra);
+  row.plays = (row.plays || 0) + 1;
+  row.lastScan = { elims: extra, at: Date.now(), note: note || '' };
+  cup.lastBoardAt = Date.now();
+  return { cup, extra };
+}
+
+export function tickTestCupScores(state) {
+  const cup = (state.tournaments || []).find((item) => item.id === 'cup_testlocal');
+  if (!cup?.startedAt || cup.paidOut || Date.now() > cup.endsAt) return false;
+  if (Date.now() - (cup.lastBoardAt || 0) < 2 * 60 * 1000) return false;
+  const bots = cup.board.filter((row) => state.users.find((user) => user.id === row.userId)?.tourneyBot);
+  if (!bots.length) return false;
+  for (const row of bots) {
+    if (Math.random() > 0.55) continue;
+    const extra = 1 + Math.floor(Math.random() * 3);
+    row.elims = Math.round((row.elims || 0) + extra);
+    row.points = round((row.points || 0) + extra);
+    row.plays = (row.plays || 0) + 1;
+  }
+  cup.lastBoardAt = Date.now();
+  return true;
+}
+
+const TEST_BOTS = ['Apex', 'Blitz', 'Cipher', 'Drift', 'Echo', 'Frost', 'Ghost', 'Havoc', 'Ivy', 'Jolt'];
+
+function blankStats() {
+  return { earned: 0, wins: 0, losses: 0, matches: 0, streak: 0, bestStreak: 0, bestScore: 0 };
+}
+
+export function seedTestCup(state) {
+  if (!state.users.some((user) => user.username === 'jarvistest')) return false;
+  if (!Array.isArray(state.tournaments)) state.tournaments = [];
+  const bots = TEST_BOTS.map((name) => {
+    let user = state.users.find((item) => item.username === name && item.tourneyBot);
+    if (!user) {
+      user = {
+        id: rid('u'),
+        username: name,
+        npc: false,
+        tourneyBot: true,
+        email: `${name.toLowerCase()}@ogvault.test`,
+        password: '',
+        balance: 0,
+        points: 0,
+        vipUntil: 0,
+        referral: name.toUpperCase(),
+        avatar: 'default',
+        chatIcon: 'none',
+        nameColor: 'default',
+        snipes: 0,
+        shields: 0,
+        excludedUntil: 0,
+        withdrawn: 0,
+        dailyClaimedAt: 0,
+        createdAt: Date.now(),
+        usernameHistory: [],
+        friends: [],
+        skill: 0,
+        stats: blankStats(),
+      };
+      state.users.push(user);
+    }
+    return user;
+  });
+  let cup = state.tournaments.find((item) => item.id === 'cup_testlocal');
+  if (!cup) {
+    cup = {
+      id: 'cup_testlocal',
+      name: 'Test Kill Race',
+      kind: 'killrace',
+      blurb: 'Local test cup with 10 bots. Press Start when you are ready.',
+      entry: 0,
+      prize: 17,
+      places: [10, 5, 2],
+      maxPlayers: 100,
+      durationMs: 2 * 60 * 60 * 1000,
+      endsAt: Date.now() + 7 * 86400000,
+      startedAt: 0,
+      paidOut: false,
+      board: [],
+    };
+    state.tournaments.unshift(cup);
+  }
+  if (cup.paidOut || cup.startedAt) return true;
+  for (const bot of bots) {
+    if (!cup.board.some((row) => row.userId === bot.id)) {
+      cup.board.push({ userId: bot.id, points: 0, plays: 0 });
+    }
+  }
+  return true;
 }
 
 export function resolveMatch(state, match, { forfeitId = null } = {}) {
