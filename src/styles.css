@@ -37,7 +37,7 @@ p { margin: 0; }
 
 .app { display: flex; min-height: 100vh; }
 .rail {
-  width: 264px;
+  width: 252px;
   transition: width 200ms ease;
   flex: none;
   position: sticky;
@@ -45,33 +45,25 @@ p { margin: 0; }
   height: 100vh;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 20px 14px 16px;
+  gap: 4px;
+  padding: 20px 12px 16px;
   border-right: 1px solid var(--line);
   background: #0c0d12;
   z-index: 8;
 }
-.rail nav {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  justify-content: space-evenly;
-  gap: 4px;
-  overflow: auto;
-  min-height: 0;
-}
+.rail nav { display: flex; flex-direction: column; gap: 3px; overflow: auto; }
 .rail a, .rail-logo {
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 12px;
+  gap: 11px;
   color: var(--muted);
   text-align: left;
-  border-radius: 10px;
-  padding: 14px 14px;
+  border-radius: 8px;
+  padding: 12px 12px;
   white-space: nowrap;
 }
-.rail a span { font-size: 17px; line-height: 1.2; font-weight: 600; letter-spacing: -0.01em; }
+.rail a span { font-size: 15.5px; line-height: 1.2; font-weight: 500; letter-spacing: -0.01em; }
 .rail nav a {
   position: relative;
   cursor: pointer;
@@ -160,7 +152,7 @@ p { margin: 0; }
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.rail nav svg { width: 24px; height: 24px; stroke-width: 1.55; flex: none; }
+.rail nav svg { width: 21px; height: 21px; stroke-width: 1.6; flex: none; }
 .rail a.rail-logo, .rail a.rail-logo:hover { padding: 4px 6px 22px; background: transparent; justify-content: flex-start; }
 .vault-logo {
   --s: 190px;
@@ -212,8 +204,8 @@ p { margin: 0; }
 .rail-toggle { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; padding: 0; }
 .rail-toggle:hover { color: white; background: rgba(255, 255, 255, 0.04); }
 .rail-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.rail-slim .rail { width: 84px; }
-.rail-slim .rail a { justify-content: center; padding: 14px 0; }
+.rail-slim .rail { width: 76px; }
+.rail-slim .rail a { justify-content: center; padding: 12px 0; }
 .rail-slim .rail a span { display: none; }
 .rail-slim .rail a.rail-logo { justify-content: center; padding: 4px 0 22px; }
 .rail-slim .rail-foot { flex-direction: column; padding: 10px 0 0; }
