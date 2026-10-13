@@ -2750,13 +2750,6 @@ function destinationText(method, destination) {
   return `${dest.accountName || '—'}\n${dest.accountNumber || '—'} · ${dest.sortCode || '—'}`;
 }
 
-function adminUserIds() {
-  return String(process.env.DISCORD_ADMIN_IDS || '')
-    .split(',')
-    .map((id) => id.trim())
-    .filter((id) => /^\d{5,32}$/.test(id));
-}
-
 async function ensureJoinsChannel(guild) {
   const channels = await guild.channels.fetch();
   const start = channels.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === 'Start here');
@@ -2789,7 +2782,7 @@ async function ensureJoinsChannel(guild) {
       deny: [PermissionFlagsBits.ViewChannel],
     })),
     ...(owner ? [{ id: owner.id, allow: view }] : []),
-    ...adminUserIds().map((userId) => ({ id: userId, allow: view, type: 1 })),
+    ...adminIds().map((userId) => ({ id: userId, allow: view, type: 1 })),
   ];
   const topic = 'Private join log. Owner only.';
   let channel = existing;
