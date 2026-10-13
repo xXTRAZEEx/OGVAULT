@@ -3,6 +3,8 @@ import { api } from '../api';
 import { pad, parts, useNow, withZone } from '../format';
 import { Amount, Avatar, Name, PageHead, Points } from '../ui';
 
+const MEDALS = { 1: '🥇', 2: '🥈', 3: '🥉' };
+
 function Podium({ places }) {
   const shown = places.filter(Boolean);
   if (!shown.length) return null;
@@ -10,10 +12,17 @@ function Podium({ places }) {
     <div className="podium">
       {shown.map((place) => (
         <article key={place.rank} className={`pod place-${place.rank}`}>
-          <span className="place">{place.rank === 1 ? '1st' : place.rank === 2 ? '2nd' : '3rd'}</span>
-          <Avatar user={place.user} size={place.rank === 1 ? 72 : 56} />
+          <div className="pod-glow" aria-hidden="true" />
+          <span className="place">
+            <span className="pod-medal" aria-hidden="true">{MEDALS[place.rank]}</span>
+            {place.rank === 1 ? '1st' : place.rank === 2 ? '2nd' : '3rd'}
+          </span>
+          <div className="pod-ava">
+            <Avatar user={place.user} size={place.rank === 1 ? 84 : 64} />
+          </div>
           <Name user={place.user} link />
-          <strong>{place.detail}</strong>
+          <strong className="pod-score">{place.detail}</strong>
+          <div className="pod-step" aria-hidden="true" />
         </article>
       ))}
     </div>
@@ -27,7 +36,7 @@ export function Leaderboard() {
     api(withZone(`/api/leaderboard?period=${period}`)).then((data) => setRows(data.rows)).catch(() => setRows([]));
   }, [period]);
   return (
-    <div>
+    <div className="board-page">
       <PageHead kicker="Ranks" title="Leaderboard" text="Only Kill Race profit counts. Daily claims, Discord status, deposits, and other free tokens do not.">
         <div className="seg">
           {[['all', 'All time'], ['daily', 'Today'], ['weekly', 'Week'], ['monthly', 'Month']].map(([id, label]) => (
@@ -41,14 +50,14 @@ export function Leaderboard() {
         detail: <Amount value={row.value} />,
       }))} />
       {rows.length > 3 && (
-      <div className="panel">
+      <div className="panel board-panel">
         <div className="tr head board"><span>#</span><span>Player</span><span>Record</span><span>Tokens</span></div>
         {rows.slice(3).map((row, index) => (
           <div className="tr board" key={row.user.id}>
-            <span>{index + 4}</span>
-            <span className="who"><Avatar user={row.user} size={32} /><Name user={row.user} link /></span>
-            <span>{row.user.stats.wins}W-{row.user.stats.losses}L</span>
-            <span><Amount value={row.value} /></span>
+            <span className="board-rank">{index + 4}</span>
+            <span className="who"><Avatar user={row.user} size={36} /><Name user={row.user} link /></span>
+            <span className="board-record">{row.user.stats.wins}W-{row.user.stats.losses}L</span>
+            <span className="board-tokens"><Amount value={row.value} /></span>
           </div>
         ))}
       </div>
@@ -100,14 +109,14 @@ export function Potw() {
         detail: <Points value={user.points} />,
       }))} />
       {leaders.length > 3 && (
-      <div className="panel">
+      <div className="panel board-panel">
         <div className="tr head board"><span>#</span><span>Player</span><span>Wins</span><span>Points</span></div>
         {leaders.slice(3).map((user, index) => (
           <div className="tr board" key={user.id}>
-            <span>{index + 4}</span>
-            <span className="who"><Avatar user={user} size={32} /><Name user={user} link /></span>
-            <span>{user.wins}</span>
-            <span><Points value={user.points} /></span>
+            <span className="board-rank">{index + 4}</span>
+            <span className="who"><Avatar user={user} size={36} /><Name user={user} link /></span>
+            <span className="board-record">{user.wins}</span>
+            <span className="board-tokens"><Points value={user.points} /></span>
           </div>
         ))}
       </div>
