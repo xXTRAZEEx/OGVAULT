@@ -123,18 +123,6 @@ export function Amount({ value, plus = false }) {
   );
 }
 
-const PALETTES = {
-  default: ['#18233a', '#2f6bff'],
-  'avatar-heat': ['#3a160f', '#ff6a3d'],
-  'avatar-frost': ['#102636', '#7ee0ff'],
-  'avatar-gold': ['#3a2d10', '#f5c451'],
-  'avatar-neon': ['#1e1036', '#b26bff'],
-  'avatar-toxic': ['#0f2a12', '#5dff6a'],
-  'avatar-prism': ['#1a1530', '#ff5fd2'],
-  'avatar-blood': ['#2a0608', '#d1132a'],
-  'avatar-galaxy': ['#0d0b2a', '#6b5bff'],
-};
-
 const NAME_MARKS = {
   'avatar-retrac': '/styles/retrac.png',
   'avatar-eon': '/styles/eon.png',
