@@ -38,8 +38,8 @@ async function api(method, path, body) {
   return data;
 }
 
-function overwrite(id, allow, deny) {
-  return { id, type: 0, allow: bits(allow), deny: bits(deny) };
+function overwrite(id, allow, deny, type = 0) {
+  return { id, type, allow: bits(allow), deny: bits(deny) };
 }
 
 async function ensureRole(roles, spec) {
@@ -181,6 +181,15 @@ async function main() {
     overwrite(member.id, VIEW | HISTORY, SEND),
   ];
 
+  const ownerOnly = [
+    overwrite(everyone.id, 0n, VIEW),
+    overwrite(member.id, 0n, VIEW),
+    ...[helper, reviewer, creator].filter(Boolean).map((role) => overwrite(role.id, 0n, VIEW)),
+    overwrite(owner.id, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n),
+    ...(bot ? [overwrite(bot.id, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n)] : []),
+    ...adminIds.map((userId) => overwrite(userId, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n, 1)),
+  ];
+  await ensureText(channels, start, 'joins', 'Private join log. Owner only.', ownerOnly);
   const welcome = await ensureText(channels, start, 'welcome', 'Start here. 18+.', gateView);
   const rulesChannel = await ensureText(channels, start, 'rules', 'Server rules.', gateView);
   const guide = await ensureText(channels, start, 'how-to-play', 'How an OGVAULT Kill Race works.', gateView);
@@ -190,6 +199,13 @@ async function main() {
   const general = await ensureText(channels, community, 'general', 'Talk with other players.', memberChat);
   await ensureText(channels, community, 'clips', 'Post your match clips.', memberChat);
   await ensureText(channels, community, 'support', 'Ask for help with a lobby.', memberChat);
+  await ensureText(channels, community, 'listings', 'Live Kill Race listings from the site. Read only.', [
+    overwrite(everyone.id, 0n, VIEW | SEND | REACTIONS | EMBED | FILES),
+    overwrite(member.id, VIEW | HISTORY, SEND | REACTIONS | EMBED | FILES),
+    ...[helper, reviewer, creator, na, eu].filter(Boolean).map((role) => overwrite(role.id, 0n, SEND | REACTIONS | EMBED | FILES)),
+    overwrite(owner.id, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n),
+    ...(bot ? [overwrite(bot.id, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n)] : []),
+  ]);
   const announcements = await ensureText(channels, news, 'announcements', 'Updates from OGVAULT. Members can read, not type.', [
     overwrite(everyone.id, 0n, VIEW | SEND),
     overwrite(member.id, VIEW | HISTORY | REACTIONS, SEND),
@@ -222,8 +238,8 @@ async function main() {
 
   channels = await api('GET', `/guilds/${guildId}/channels`);
   const order = [
-    ['Start here', ['welcome', 'rules', 'how-to-play', 'verify', 'regions', 'project-roles', 'support']],
-    ['Community', ['general', 'clips', 'support']],
+    ['Start here', ['joins', 'welcome', 'rules', 'how-to-play', 'verify', 'regions', 'project-roles', 'support']],
+    ['Community', ['general', 'clips', 'support', 'listings']],
     ['News', ['announcements', 'tournaments']],
     ['Staff', null],
     ['Finance', null],

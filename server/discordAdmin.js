@@ -2750,6 +2750,93 @@ function destinationText(method, destination) {
   return `${dest.accountName || '—'}\n${dest.accountNumber || '—'} · ${dest.sortCode || '—'}`;
 }
 
+function adminUserIds() {
+  return String(process.env.DISCORD_ADMIN_IDS || '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => /^\d{5,32}$/.test(id));
+}
+
+async function ensureJoinsChannel(guild) {
+  const channels = await guild.channels.fetch();
+  const start = channels.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === 'Start here');
+  const welcome = channels.find(
+    (channel) => channel.type === ChannelType.GuildText && channel.name === 'welcome' && (!start || channel.parentId === start.id),
+  );
+  const existing = channels.find(
+    (channel) => channel.type === ChannelType.GuildText && channel.name === 'joins' && (!start || channel.parentId === start.id),
+  ) || channels.find((channel) => channel.type === ChannelType.GuildText && channel.name === 'joins');
+  const roles = await guild.roles.fetch();
+  const owner = roles.find((role) => role.name === 'Owner');
+  const member = roles.find((role) => role.name === 'Member');
+  const helper = roles.find((role) => role.name === 'Helper');
+  const reviewer = roles.find((role) => role.name === REVIEWER_ROLE_NAME);
+  const creator = roles.find((role) => role.name === 'Content Creator');
+  const view = [
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.ReadMessageHistory,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.EmbedLinks,
+    PermissionFlagsBits.AttachFiles,
+    PermissionFlagsBits.AddReactions,
+  ];
+  const overwrites = [
+    { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+    { id: guild.members.me.id, allow: [...view, PermissionFlagsBits.ManageMessages] },
+    ...(member ? [{ id: member.id, deny: [PermissionFlagsBits.ViewChannel] }] : []),
+    ...[helper, reviewer, creator].filter(Boolean).map((role) => ({
+      id: role.id,
+      deny: [PermissionFlagsBits.ViewChannel],
+    })),
+    ...(owner ? [{ id: owner.id, allow: view }] : []),
+    ...adminUserIds().map((userId) => ({ id: userId, allow: view, type: 1 })),
+  ];
+  const topic = 'Private join log. Owner only.';
+  let channel = existing;
+  if (channel) {
+    await channel.permissionOverwrites.set(overwrites).catch(() => {});
+    if (start && channel.parentId !== start.id) {
+      await channel.setParent(start.id, { lockPermissions: false }).catch(() => {});
+    }
+    if (channel.topic !== topic) await channel.setTopic(topic).catch(() => {});
+  } else {
+    channel = await guild.channels.create({
+      name: 'joins',
+      type: ChannelType.GuildText,
+      parent: start?.id,
+      topic,
+      permissionOverwrites: overwrites,
+    });
+  }
+  if (welcome && channel.parentId === welcome.parentId && channel.position > welcome.position) {
+    await channel.setPosition(welcome.position).catch(() => {});
+  }
+  return channel;
+}
+
+async function notifyMemberJoined(member) {
+  if (!member?.guild || member.user?.bot) return;
+  const guildId = String(process.env.DISCORD_GUILD_ID || '').trim();
+  if (guildId && member.guild.id !== guildId) return;
+  const channel = await ensureJoinsChannel(member.guild).catch(() => null);
+  if (!channel?.isTextBased?.()) return;
+  const created = Math.floor(member.user.createdTimestamp / 1000);
+  const embed = new EmbedBuilder()
+    .setColor(0xf5c451)
+    .setAuthor({
+      name: member.user.tag || member.user.username || member.id,
+      iconURL: member.user.displayAvatarURL({ size: 128 }),
+    })
+    .setDescription(`${member} joined the server`)
+    .addFields(
+      { name: 'Account created', value: `<t:${created}:R>`, inline: true },
+      { name: 'Members', value: String(member.guild.memberCount || '—'), inline: true },
+      { name: 'User ID', value: `\`${member.id}\``, inline: false },
+    )
+    .setTimestamp();
+  await channel.send({ embeds: [embed] }).catch(() => {});
+}
+
 async function ensureListingsChannel(guild) {
   const channels = await guild.channels.fetch();
   const community = channels.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === 'Community');
@@ -3476,7 +3563,7 @@ export function startDiscordAdmin(withPresence = true, withMembers = true) {
   const baseIntents = [GatewayIntentBits.Guilds, GatewayIntentBits.AutoModerationExecution, GatewayIntentBits.GuildVoiceStates];
   const intents = [...baseIntents];
   if (withPresence) intents.push(GatewayIntentBits.GuildPresences);
-  if (withPresence && withMembers) intents.push(GatewayIntentBits.GuildMembers);
+  if (withMembers) intents.push(GatewayIntentBits.GuildMembers);
   const client = new Client({ intents });
   bot = client;
   presenceEnabled = withPresence;
@@ -3488,6 +3575,9 @@ export function startDiscordAdmin(withPresence = true, withMembers = true) {
   client.on('presenceUpdate', (_oldPresence, presence) => {
     if (!presenceEnabled) return;
     rememberPresence(presence);
+  });
+  client.on('guildMemberAdd', (member) => {
+    notifyMemberJoined(member).catch(() => {});
   });
   client.once('ready', async () => {
     if (!/^\d{5,32}$/.test(guildId)) {
@@ -3528,6 +3618,7 @@ export function startDiscordAdmin(withPresence = true, withMembers = true) {
       announceWeeklyResults().catch(() => console.error('Weekly Vault announcement failed'));
       setInterval(() => { announceWeeklyResults().catch(() => console.error('Weekly Vault announcement failed')); }, 5 * 60 * 1000);
       await ensureVoiceChannels(guild).catch(() => console.error('Could not set up voice channels'));
+      await ensureJoinsChannel(guild).catch(() => console.error('Could not set up joins channel'));
       await ensureListingsChannel(guild).catch(() => console.error('Could not set up listings channel'));
       await ensureTournamentRole(guild).catch(() => {});
       await ensureProjectRoles(guild).catch(() => console.error('Could not create Eon/Retrac roles'));
@@ -3649,8 +3740,13 @@ export function startDiscordAdmin(withPresence = true, withMembers = true) {
     if (/disallowed intents/i.test(String(error?.message || ''))) {
       Promise.resolve().then(() => client.destroy()).catch(() => {});
       if (withPresence && withMembers) {
-        console.error('Server Members Intent may be off; retrying presence without member fetch');
-        startDiscordAdmin(true, false);
+        console.error('Presence Intent may be off; retrying with Server Members only for join logs');
+        startDiscordAdmin(false, true);
+        return;
+      }
+      if (withMembers) {
+        console.error('Server Members Intent is off; join logs and presence rewards need it enabled');
+        startDiscordAdmin(false, false);
         return;
       }
       if (withPresence) {
