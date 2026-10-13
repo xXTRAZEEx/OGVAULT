@@ -2806,7 +2806,14 @@ function destinationText(method, destination) {
   return `${dest.accountName || '—'}\n${dest.accountNumber || '—'} · ${dest.sortCode || '—'}`;
 }
 
+let joinsChannelId = '';
+
 async function ensureJoinsChannel(guild) {
+  if (joinsChannelId) {
+    const cached = await guild.channels.fetch(joinsChannelId).catch(() => null);
+    if (cached?.isTextBased?.()) return cached;
+    joinsChannelId = '';
+  }
   const channels = await guild.channels.fetch();
   const start = channels.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === 'Start here');
   const welcome = channels.find(
@@ -2861,30 +2868,58 @@ async function ensureJoinsChannel(guild) {
   if (welcome && channel.parentId === welcome.parentId && channel.position > welcome.position) {
     await channel.setPosition(welcome.position).catch(() => {});
   }
+  joinsChannelId = channel.id;
   return channel;
 }
 
+async function resolveJoinsChannel(guild) {
+  if (joinsChannelId) {
+    const cached = await guild.channels.fetch(joinsChannelId).catch(() => null);
+    if (cached?.isTextBased?.()) return cached;
+    joinsChannelId = '';
+  }
+  const channels = await guild.channels.fetch().catch(() => null);
+  const found = channels?.find?.((channel) => channel.type === ChannelType.GuildText && channel.name === 'joins')
+    || guild.channels.cache.find((channel) => channel.type === ChannelType.GuildText && channel.name === 'joins');
+  if (found?.isTextBased?.()) {
+    joinsChannelId = found.id;
+    return found;
+  }
+  return ensureJoinsChannel(guild);
+}
+
 async function notifyMemberJoined(member) {
-  if (!member?.guild || member.user?.bot) return;
-  const guildId = String(process.env.DISCORD_GUILD_ID || '').trim();
-  if (guildId && member.guild.id !== guildId) return;
-  const channel = await ensureJoinsChannel(member.guild).catch(() => null);
-  if (!channel?.isTextBased?.()) return;
-  const created = Math.floor(member.user.createdTimestamp / 1000);
-  const embed = new EmbedBuilder()
-    .setColor(0xf5c451)
-    .setAuthor({
-      name: member.user.tag || member.user.username || member.id,
-      iconURL: member.user.displayAvatarURL({ size: 128 }),
-    })
-    .setDescription(`${member} joined the server`)
-    .addFields(
-      { name: 'Account created', value: `<t:${created}:R>`, inline: true },
-      { name: 'Members', value: String(member.guild.memberCount || '—'), inline: true },
-      { name: 'User ID', value: `\`${member.id}\``, inline: false },
-    )
-    .setTimestamp();
-  await channel.send({ embeds: [embed] }).catch(() => {});
+  try {
+    if (!member?.guild || member.user?.bot) return;
+    const guildId = String(process.env.DISCORD_GUILD_ID || '').trim();
+    if (guildId && member.guild.id !== guildId) {
+      console.log(`Join ignored for guild ${member.guild.id} (expected ${guildId})`);
+      return;
+    }
+    console.log(`Member joined: ${member.user?.tag || member.id}`);
+    const channel = await resolveJoinsChannel(member.guild);
+    if (!channel?.isTextBased?.()) {
+      console.error('Join log skipped: #joins channel missing');
+      return;
+    }
+    const created = Math.floor(member.user.createdTimestamp / 1000);
+    const embed = new EmbedBuilder()
+      .setColor(0xf5c451)
+      .setAuthor({
+        name: member.user.tag || member.user.username || member.id,
+        iconURL: member.user.displayAvatarURL({ size: 128 }),
+      })
+      .setDescription(`${member} joined the server`)
+      .addFields(
+        { name: 'Account created', value: `<t:${created}:R>`, inline: true },
+        { name: 'Members', value: String(member.guild.memberCount || '—'), inline: true },
+        { name: 'User ID', value: `\`${member.id}\``, inline: false },
+      )
+      .setTimestamp();
+    await channel.send({ embeds: [embed] });
+  } catch (error) {
+    console.error('Join log failed', error?.message || error);
+  }
 }
 
 async function ensureListingsChannel(guild) {
@@ -3628,7 +3663,7 @@ export function startDiscordAdmin(withPresence = true, withMembers = true) {
     rememberPresence(presence);
   });
   client.on('guildMemberAdd', (member) => {
-    notifyMemberJoined(member).catch(() => {});
+    notifyMemberJoined(member).catch((error) => console.error('guildMemberAdd handler failed', error?.message || error));
   });
   client.once('ready', async () => {
     if (!/^\d{5,32}$/.test(guildId)) {
@@ -3638,6 +3673,11 @@ export function startDiscordAdmin(withPresence = true, withMembers = true) {
     try {
       const rest = new REST({ version: '10' }).setToken(token);
       const guild = await client.guilds.fetch(guildId);
+      const membersIntentOn = client.options.intents.has(GatewayIntentBits.GuildMembers);
+      console.log(`Discord intents: members=${membersIntentOn} presence=${withPresence}`);
+      if (!membersIntentOn) {
+        console.error('Server Members Intent is off — #joins will not receive join events. Enable it in the Discord Developer Portal.');
+      }
       if (withPresence) {
         try {
           if (withMembers) await guild.members.fetch();
