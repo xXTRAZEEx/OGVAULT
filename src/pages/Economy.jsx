@@ -128,10 +128,19 @@ function slotOf(item) {
   return null;
 }
 
+function shopTheme(id) {
+  if (id === 'vip') return 'vip';
+  if (id === 'snipes' || id === 'shield') return 'perk';
+  if (MARK_ART[id]) return id === 'avatar-retrac' ? 'retrac' : 'eon';
+  if (id.startsWith('avatar-')) return id.slice(7);
+  if (colorOf(id)) return `color-${colorOf(id)}`;
+  return 'default';
+}
+
 function ShopPreview({ id }) {
   if (id === 'vip') {
     return (
-      <div className="shop-preview" aria-hidden="true">
+      <div className="shop-stage" aria-hidden="true">
         <span className="shop-ava vip-sample">
           V
           <svg className="shop-crown" viewBox="0 0 12 12"><path d="M1 9h10L9.5 4 7 6.5 6 3 5 6.5 2.5 4z" fill="#f5c451" /></svg>
@@ -142,7 +151,7 @@ function ShopPreview({ id }) {
   }
   if (id === 'snipes') {
     return (
-      <div className="shop-preview" aria-hidden="true">
+      <div className="shop-stage" aria-hidden="true">
         <svg className="shop-glyph" viewBox="0 0 32 32">
           <path d="M4 16s4.5-7 12-7 12 7 12 7-4.5 7-12 7S4 16 4 16z" fill="none" stroke="#8eb0ff" strokeWidth="2" />
           <circle cx="16" cy="16" r="3.2" fill="#2f6bff" />
@@ -152,7 +161,7 @@ function ShopPreview({ id }) {
   }
   if (id === 'shield') {
     return (
-      <div className="shop-preview" aria-hidden="true">
+      <div className="shop-stage" aria-hidden="true">
         <svg className="shop-glyph" viewBox="0 0 32 32">
           <path d="M16 4l10 4v8c0 6.2-4.2 10.4-10 12-5.8-1.6-10-5.8-10-12V8z" fill="none" stroke="#8eb0ff" strokeWidth="2" />
           <path d="M11 16l3.2 3.2L21 12.4" fill="none" stroke="#f5c451" strokeWidth="2" strokeLinecap="round" />
@@ -162,7 +171,7 @@ function ShopPreview({ id }) {
   }
   if (MARK_ART[id]) {
     return (
-      <div className="shop-preview" aria-hidden="true">
+      <div className="shop-stage" aria-hidden="true">
         <span className="shop-name">
           Player
           <img className={`name-mark ${id === 'avatar-retrac' ? 'retrac' : 'eon'}`} src={MARK_ART[id]} alt="" />
@@ -172,7 +181,7 @@ function ShopPreview({ id }) {
   }
   if (id.startsWith('avatar-')) {
     return (
-      <div className="shop-preview" aria-hidden="true">
+      <div className="shop-stage" aria-hidden="true">
         <span className={`shop-ava ring-${id.slice(7)}`}>
           A
           <FrameFx heat={id === 'avatar-heat'} frost={id === 'avatar-frost'} />
@@ -182,7 +191,7 @@ function ShopPreview({ id }) {
   }
   if (colorOf(id)) {
     return (
-      <div className="shop-preview" aria-hidden="true">
+      <div className="shop-stage" aria-hidden="true">
         <span className={`shop-name c-${colorOf(id)}`}>Player</span>
       </div>
     );
@@ -195,7 +204,13 @@ export function Shop() {
   const now = useNow(60000);
   const [shop, setShop] = useState([]);
   const owned = inventoryRows(me, now);
-  useEffect(() => { api('/api/shop').then((data) => setShop(data.shop)); }, []);
+  const [sale, setSale] = useState(null);
+  useEffect(() => {
+    api('/api/shop').then((data) => {
+      setShop(data.shop || []);
+      setSale(data.sale || null);
+    });
+  }, []);
   useEffect(() => {
     if (window.location.hash === '#inventory') {
       document.getElementById('inventory')?.scrollIntoView();
@@ -212,9 +227,16 @@ export function Shop() {
     } catch (err) { toast(err.message, 'bad'); }
   }
 
+  const saleNote = sale?.percent > 0
+    ? (sale.items?.length
+      ? `${sale.percent}% off selected items`
+      : `${sale.percent}% off the whole shop`)
+    : '';
+
   return (
     <div className="stack-lg">
       <PageHead kicker="Style and edge" title="Shop" text="Spend tokens on VIP, snipes, shields, and marks. Nothing here bills a card." />
+      {saleNote && <p className="shop-sale-banner">{saleNote}</p>}
       <section className="panel" id="inventory">
         <h2>Inventory</h2>
         {!me && <p className="muted">Sign in to see what you have bought.</p>}
@@ -247,39 +269,50 @@ export function Shop() {
           const cosmetic = slotOf(item);
           const bought = ownsItem(me, item);
           const equipped = cosmetic ? cosmetic.equipped(me) : false;
+          const base = item.basePrice ?? item.price;
+          const onSale = !!(item.onSale && item.price < base);
+          const rare = base >= RARE_PRICE && section.id !== 'perks';
           return (
-            <article key={item.id} className="panel item">
-              <ShopPreview id={item.id} />
-              <span className={`tag ${item.price >= RARE_PRICE && section.id !== 'perks' ? 'rare' : ''}`}>
-                {item.price >= RARE_PRICE && section.id !== 'perks' ? 'Rare' : item.tag}
-              </span>
-              <h2>{item.name}</h2>
-              <p>{shopBlurb(item)}</p>
-              {bought && cosmetic && equipped && (
-                <div className="item-actions">
-                  <span className="tag gold">Equipped</span>
-                  <button className="btn ghost" onClick={() => wear(cosmetic.slot, cosmetic.id, false)}>Unequip</button>
-                </div>
-              )}
-              {bought && cosmetic && !equipped && (
-                <div className="item-actions">
-                  <span className="tag">Purchased</span>
-                  <button className="btn" onClick={() => wear(cosmetic.slot, cosmetic.id, true)}>Equip</button>
-                </div>
-              )}
-              {bought && !cosmetic && <span className="tag gold">Purchased</span>}
-              {!bought && (
-                <button className="btn" onClick={async () => {
-                  if (!me) { setAuth('in'); return; }
-                  try {
-                    const data = await api('/api/shop/buy', { method: 'POST', body: { itemId: item.id } });
-                    setMe(data.user);
-                    toast(`${item.name} is yours`);
-                  } catch (err) { toast(err.message, 'bad'); }
-                }}>
-                  <Token /> {format(item.price)}
-                </button>
-              )}
+            <article key={item.id} className={`shop-card theme-${shopTheme(item.id)} ${onSale ? 'on-sale' : ''} ${rare ? 'is-rare' : ''}`}>
+              {onSale && <span className="shop-sale-flag">−{item.discount}%</span>}
+              <div className="shop-hero">
+                <div className="shop-hero-glow" aria-hidden="true" />
+                <ShopPreview id={item.id} />
+                <span className={`shop-chip ${rare ? 'rare' : ''}`}>{rare ? 'Rare' : item.tag}</span>
+              </div>
+              <div className="shop-card-body">
+                <h2>{item.name}</h2>
+                <p>{shopBlurb(item)}</p>
+              </div>
+              <div className="shop-card-foot">
+                {bought && cosmetic && equipped && (
+                  <div className="item-actions">
+                    <span className="tag gold">Equipped</span>
+                    <button className="btn ghost" onClick={() => wear(cosmetic.slot, cosmetic.id, false)}>Unequip</button>
+                  </div>
+                )}
+                {bought && cosmetic && !equipped && (
+                  <div className="item-actions">
+                    <span className="tag">Owned</span>
+                    <button className="btn" onClick={() => wear(cosmetic.slot, cosmetic.id, true)}>Equip</button>
+                  </div>
+                )}
+                {bought && !cosmetic && <span className="tag gold">Owned</span>}
+                {!bought && (
+                  <button className={`btn shop-buy ${onSale ? 'sale' : ''}`} onClick={async () => {
+                    if (!me) { setAuth('in'); return; }
+                    try {
+                      const data = await api('/api/shop/buy', { method: 'POST', body: { itemId: item.id } });
+                      setMe(data.user);
+                      toast(`${item.name} is yours`);
+                    } catch (err) { toast(err.message, 'bad'); }
+                  }}>
+                    <Token />
+                    {onSale && <span className="shop-was">{format(base)}</span>}
+                    <span>{format(item.price)}</span>
+                  </button>
+                )}
+              </div>
             </article>
           );
         })}
