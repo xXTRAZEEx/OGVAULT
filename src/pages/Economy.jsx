@@ -133,7 +133,7 @@ function shopTheme(id) {
   if (id === 'snipes' || id === 'shield') return 'perk';
   if (MARK_ART[id]) return id === 'avatar-retrac' ? 'retrac' : 'eon';
   if (id.startsWith('avatar-')) return id.slice(7);
-  if (colorOf(id)) return `color-${colorOf(id)}`;
+  if (colorOf(id)) return colorOf(id);
   return 'default';
 }
 
@@ -172,10 +172,13 @@ function ShopPreview({ id }) {
   if (MARK_ART[id]) {
     return (
       <div className="shop-stage" aria-hidden="true">
-        <span className="shop-name">
-          Player
-          <img className={`name-mark ${id === 'avatar-retrac' ? 'retrac' : 'eon'}`} src={MARK_ART[id]} alt="" />
-        </span>
+        <div className="shop-chat-preview">
+          <span className="shop-mini-ava">P</span>
+          <span className="shop-name">
+            Player
+            <img className={`name-mark ${id === 'avatar-retrac' ? 'retrac' : 'eon'}`} src={MARK_ART[id]} alt="" />
+          </span>
+        </div>
       </div>
     );
   }
@@ -192,7 +195,13 @@ function ShopPreview({ id }) {
   if (colorOf(id)) {
     return (
       <div className="shop-stage" aria-hidden="true">
-        <span className={`shop-name c-${colorOf(id)}`}>Player</span>
+        <div className="shop-chat-preview">
+          <span className="shop-mini-ava">P</span>
+          <div className="shop-chat-copy">
+            <span className={`shop-name c-${colorOf(id)}`}>Player</span>
+            <span className="shop-chat-line">looking sharp in chat</span>
+          </div>
+        </div>
       </div>
     );
   }
@@ -273,14 +282,14 @@ export function Shop() {
           const onSale = !!(item.onSale && item.price < base);
           const rare = base >= RARE_PRICE && section.id !== 'perks';
           return (
-            <article key={item.id} className={`shop-card theme-${shopTheme(item.id)} ${onSale ? 'on-sale' : ''} ${rare ? 'is-rare' : ''}`}>
+            <article key={item.id} className={`shop-card theme-${shopTheme(item.id)} ${onSale ? 'on-sale' : ''} ${rare ? 'is-rare' : ''} ${colorOf(item.id) ? 'is-color' : ''}`}>
               {onSale && <span className="shop-sale-flag">−{item.discount}%</span>}
               <div className="shop-hero">
                 <div className="shop-hero-glow" aria-hidden="true" />
                 <ShopPreview id={item.id} />
-                <span className={`shop-chip ${rare ? 'rare' : ''}`}>{rare ? 'Rare' : item.tag}</span>
               </div>
               <div className="shop-card-body">
+                <span className={`shop-chip ${rare ? 'rare' : ''}`}>{rare ? 'Rare' : item.tag}</span>
                 <h2>{item.name}</h2>
                 <p>{shopBlurb(item)}</p>
               </div>

@@ -982,37 +982,37 @@ canvas { border-radius: 24px; background: #07080d; width: 100%; height: auto; }
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  border-radius: 20px;
+  border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background:
     linear-gradient(165deg, rgba(122, 162, 255, 0.12), transparent 42%),
-    linear-gradient(180deg, #121722, #090b10 70%);
+    linear-gradient(180deg, #131821, #0a0c11 72%);
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.03) inset,
-    0 14px 36px rgba(0, 0, 0, 0.35);
+    0 12px 28px rgba(0, 0, 0, 0.32);
   transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
 }
 .shop-card:hover {
-  transform: translateY(-5px);
+  transform: translateY(-4px);
   border-color: rgba(255, 255, 255, 0.22);
   box-shadow:
     0 0 0 1px rgba(122, 162, 255, 0.2),
-    0 0 28px rgba(122, 162, 255, 0.14),
-    0 22px 44px rgba(0, 0, 0, 0.45);
+    0 0 24px rgba(122, 162, 255, 0.12),
+    0 18px 36px rgba(0, 0, 0, 0.42);
 }
 @supports (color: color-mix(in srgb, red, blue)) {
   .shop-card {
-    border-color: color-mix(in srgb, var(--shop-accent) 28%, rgba(255, 255, 255, 0.08));
+    border-color: color-mix(in srgb, var(--shop-accent) 30%, rgba(255, 255, 255, 0.08));
     background:
-      linear-gradient(165deg, color-mix(in srgb, var(--shop-accent) 14%, transparent), transparent 42%),
-      linear-gradient(180deg, #121722, #090b10 70%);
+      linear-gradient(165deg, color-mix(in srgb, var(--shop-accent) 16%, transparent), transparent 46%),
+      linear-gradient(180deg, #131821, #0a0c11 72%);
   }
   .shop-card:hover {
-    border-color: color-mix(in srgb, var(--shop-accent) 55%, rgba(255, 255, 255, 0.2));
+    border-color: color-mix(in srgb, var(--shop-accent) 58%, rgba(255, 255, 255, 0.18));
     box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--shop-accent) 25%, transparent),
-      0 0 28px color-mix(in srgb, var(--shop-accent) 18%, transparent),
-      0 22px 44px rgba(0, 0, 0, 0.45);
+      0 0 0 1px color-mix(in srgb, var(--shop-accent) 28%, transparent),
+      0 0 26px color-mix(in srgb, var(--shop-accent) 18%, transparent),
+      0 18px 36px rgba(0, 0, 0, 0.42);
   }
 }
 .shop-card.theme-heat { --shop-accent: #ff6a3d; }
@@ -1026,30 +1026,42 @@ canvas { border-radius: 24px; background: #07080d; width: 100%; height: auto; }
 .shop-card.theme-eon { --shop-accent: #22c55e; }
 .shop-card.theme-retrac { --shop-accent: #3b82f6; }
 .shop-card.theme-perk { --shop-accent: #7aa2ff; }
+.shop-card.theme-blue { --shop-accent: #9ec0ff; }
+.shop-card.theme-crimson { --shop-accent: #ff4d5e; }
+.shop-card.theme-emerald { --shop-accent: #3ee08f; }
+.shop-card.theme-violet { --shop-accent: #b98bff; }
+.shop-card.theme-sunset { --shop-accent: #ff8a5c; }
+.shop-card.theme-ocean { --shop-accent: #3fe0d0; }
+.shop-card.theme-chrome { --shop-accent: #c9ced6; }
+.shop-card.theme-ice { --shop-accent: #9fe8ff; }
+.shop-card.theme-inferno { --shop-accent: #ff6a00; }
+.shop-card.theme-rainbow { --shop-accent: #ff5fd2; }
 .shop-card.is-rare {
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--shop-accent) 35%, transparent),
-    0 0 32px color-mix(in srgb, var(--shop-accent) 16%, transparent),
-    0 14px 36px rgba(0, 0, 0, 0.35);
+    0 0 0 1px color-mix(in srgb, var(--shop-accent) 38%, transparent),
+    0 0 30px color-mix(in srgb, var(--shop-accent) 18%, transparent),
+    0 12px 28px rgba(0, 0, 0, 0.32);
 }
 
 .shop-hero {
   position: relative;
-  min-height: 148px;
+  min-height: 132px;
   display: grid;
   place-items: center;
+  padding: 22px 18px 18px;
   overflow: hidden;
   isolation: isolate;
   background:
-    radial-gradient(ellipse 80% 70% at 50% 55%, color-mix(in srgb, var(--shop-accent) 32%, transparent), transparent 70%),
-    linear-gradient(180deg, #161b28 0%, #0a0d14 100%);
+    radial-gradient(ellipse 85% 75% at 50% 40%, color-mix(in srgb, var(--shop-accent) 34%, transparent), transparent 68%),
+    linear-gradient(180deg, #171d2b 0%, #0b0e16 100%);
 }
+.shop-card.is-color .shop-hero { min-height: 118px; padding: 20px 16px 16px; }
 .shop-hero::before {
   content: '';
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(115deg, transparent 35%, rgba(255, 255, 255, 0.07) 48%, transparent 62%);
+    linear-gradient(115deg, transparent 34%, rgba(255, 255, 255, 0.08) 48%, transparent 62%);
   mix-blend-mode: soft-light;
   pointer-events: none;
 }
@@ -1057,17 +1069,17 @@ canvas { border-radius: 24px; background: #07080d; width: 100%; height: auto; }
   content: '';
   position: absolute;
   inset: auto 0 0;
-  height: 48px;
-  background: linear-gradient(180deg, transparent, rgba(9, 11, 16, 0.92));
+  height: 36px;
+  background: linear-gradient(180deg, transparent, rgba(10, 12, 17, 0.95));
   pointer-events: none;
 }
 .shop-hero-glow {
   position: absolute;
-  width: 120px;
-  height: 120px;
+  width: 140px;
+  height: 140px;
   border-radius: 50%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--shop-accent) 45%, transparent), transparent 68%);
-  filter: blur(8px);
+  background: radial-gradient(circle, color-mix(in srgb, var(--shop-accent) 48%, transparent), transparent 70%);
+  filter: blur(10px);
   z-index: 0;
   animation: shop-pulse 2.8s ease-in-out infinite;
 }
@@ -1076,26 +1088,22 @@ canvas { border-radius: 24px; background: #07080d; width: 100%; height: auto; }
   50% { transform: scale(1.08); opacity: 1; }
 }
 .shop-chip {
-  position: absolute;
-  left: 12px;
-  bottom: 12px;
-  z-index: 2;
+  position: static;
   display: inline-flex;
   align-items: center;
-  padding: 4px 10px;
+  padding: 4px 9px;
   border-radius: 999px;
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #fff;
-  background: rgba(0, 0, 0, 0.55);
-  border: 1px solid color-mix(in srgb, var(--shop-accent) 45%, rgba(255, 255, 255, 0.15));
-  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid color-mix(in srgb, var(--shop-accent) 40%, rgba(255, 255, 255, 0.12));
 }
 .shop-chip.rare {
   color: #ffe8fb;
-  background: linear-gradient(90deg, rgba(255, 95, 210, 0.35), rgba(95, 210, 255, 0.22));
+  background: linear-gradient(90deg, rgba(255, 95, 210, 0.32), rgba(95, 210, 255, 0.18));
   border-color: rgba(255, 95, 210, 0.45);
 }
 
@@ -1103,13 +1111,54 @@ canvas { border-radius: 24px; background: #07080d; width: 100%; height: auto; }
   position: relative;
   z-index: 1;
   min-height: 0;
-  width: auto;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
   background: none;
   border: 0;
   overflow: visible;
+}
+.shop-chat-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 240px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(8, 10, 16, 0.72);
+  border: 1px solid color-mix(in srgb, var(--shop-accent) 28%, rgba(255, 255, 255, 0.1));
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset,
+    0 10px 24px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
+}
+.shop-mini-ava {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 800;
+  color: #fff;
+  background: linear-gradient(145deg, #243352, #3a5278);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--shop-accent) 55%, transparent);
+}
+.shop-chat-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.shop-chat-line {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .shop-ava {
   width: 84px;
@@ -1126,18 +1175,27 @@ canvas { border-radius: 24px; background: #07080d; width: 100%; height: auto; }
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
 }
 .shop-glyph { width: 56px; height: 56px; filter: drop-shadow(0 0 12px color-mix(in srgb, var(--shop-accent) 40%, transparent)); }
-.shop-name { display: inline-flex; align-items: center; gap: 8px; font-weight: 800; font-size: 22px; text-shadow: 0 2px 16px rgba(0, 0, 0, 0.55); }
+.shop-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 800;
+  font-size: 20px;
+  letter-spacing: -0.03em;
+  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.55);
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--shop-accent) 35%, transparent));
+}
 
 .shop-card-body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   align-items: flex-start;
   width: 100%;
-  padding: 4px 16px 0;
+  padding: 2px 16px 0;
 }
 .shop-card h2 {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 700;
   letter-spacing: -0.03em;
   margin: 0;
@@ -1148,7 +1206,7 @@ canvas { border-radius: 24px; background: #07080d; width: 100%; height: auto; }
   font-size: 13px;
   line-height: 1.45;
   color: var(--muted);
-  min-height: 2.8em;
+  min-height: 0;
 }
 .shop-card-foot {
   display: flex;
@@ -1157,6 +1215,13 @@ canvas { border-radius: 24px; background: #07080d; width: 100%; height: auto; }
   width: 100%;
   margin-top: auto;
   padding: 14px 16px 16px;
+}
+.shop-card-foot .shop-buy,
+.shop-card-foot .item-actions {
+  width: 100%;
+}
+.shop-card-foot .item-actions {
+  justify-content: space-between;
 }
 .shop-sale-banner {
   margin: 0;
@@ -1184,11 +1249,15 @@ canvas { border-radius: 24px; background: #07080d; width: 100%; height: auto; }
 .shop-buy {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  min-height: 40px;
+  width: 100%;
+  min-height: 42px;
   padding-inline: 14px;
   border: 0;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--shop-accent) 75%, #2f6bff), color-mix(in srgb, var(--shop-accent) 35%, #1d4ed8));
+  border-radius: 12px;
+  font-weight: 700;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--shop-accent) 78%, #2f6bff), color-mix(in srgb, var(--shop-accent) 32%, #1d4ed8));
   box-shadow: 0 8px 18px color-mix(in srgb, var(--shop-accent) 28%, transparent);
 }
 .shop-buy.sale {
