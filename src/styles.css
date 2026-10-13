@@ -71,7 +71,7 @@ p { margin: 0; }
   padding: 14px 14px;
   white-space: nowrap;
 }
-.rail a span { font-size: 17px; line-height: 1.2; font-weight: 550; letter-spacing: -0.01em; }
+.rail a span { font-size: 17px; line-height: 1.2; font-weight: 600; letter-spacing: -0.01em; }
 .rail nav a {
   position: relative;
   cursor: pointer;
