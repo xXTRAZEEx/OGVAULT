@@ -697,7 +697,19 @@ label input[type="number"]::-webkit-inner-spin-button {
   .fx-amber i:nth-child(6), .fx-blood i:nth-child(6) { top: 52%; }
 }
 .avatar.has-photo { overflow: visible; }
-.avatar.has-photo > img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 50%; position: relative; z-index: 1; }
+.avatar.has-photo > img,
+.avatar.default-avatar > svg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 50%;
+  position: relative;
+  z-index: 1;
+}
+.avatar.default-avatar {
+  background: #9ea0a4;
+}
 .avatar-letter { position: relative; z-index: 1; }
 .avatar.vip { box-shadow: 0 0 0 2px var(--gold); }
 .avatar.ring-heat { box-shadow: 0 0 0 3px #07080d, 0 0 0 5px #ff6a3d; }

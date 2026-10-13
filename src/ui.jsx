@@ -210,13 +210,13 @@ export function Avatar({ user, size = 40 }) {
       </span>
     );
   }
-  const [from, to] = PALETTES[user?.avatar] || PALETTES.default;
   return (
-    <span
-      className={klass}
-      style={{ width: size, height: size, background: `linear-gradient(145deg, ${from}, ${to})`, fontSize: size * 0.4 }}
-    >
-      <span className="avatar-letter">{(user?.username || '?').slice(0, 1).toUpperCase()}</span>
+    <span className={`${klass} has-photo default-avatar`} style={{ width: size, height: size }}>
+      <svg viewBox="0 0 64 64" width={size} height={size} aria-hidden="true">
+        <circle cx="32" cy="32" r="32" fill="#9ea0a4" />
+        <circle cx="32" cy="24" r="12" fill="#ffffff" />
+        <path d="M8 58c4.5-14 14-20 24-20s19.5 6 24 20" fill="#ffffff" />
+      </svg>
       {fx}
     </span>
   );
