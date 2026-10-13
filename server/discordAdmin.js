@@ -2075,6 +2075,7 @@ const STATUS_POINTS = POINTS.status;
 const STATUS_NEED_MS = 60 * 60 * 1000;
 const STATUS_TICK_MS = 5 * 60 * 1000;
 let presenceEnabled = false;
+const presenceByUser = new Map();
 
 function statusKeywords() {
   const extra = String(process.env.STATUS_KEYWORDS || '').split(',').map((word) => word.trim().toLowerCase()).filter(Boolean);
@@ -2086,9 +2087,33 @@ function customStatus(presence) {
   return String(activity?.state || '');
 }
 
+function normalizePresenceStatus(value) {
+  const status = String(value || 'offline').toLowerCase();
+  if (status === 'online' || status === 'idle' || status === 'dnd') return status;
+  return 'offline';
+}
+
+function rememberPresence(presence) {
+  const userId = String(presence?.userId || presence?.user?.id || '');
+  if (!userId) return null;
+  const snap = {
+    status: normalizePresenceStatus(presence.status),
+    customStatus: customStatus(presence),
+  };
+  presenceByUser.set(userId, snap);
+  return snap;
+}
+
+function seedPresences(guild) {
+  if (!guild?.presences?.cache) return;
+  for (const presence of guild.presences.cache.values()) rememberPresence(presence);
+}
+
 function showsStatus(presence) {
-  if (!presence || presence.status === 'offline') return false;
-  const text = customStatus(presence).toLowerCase();
+  if (!presence) return false;
+  const status = normalizePresenceStatus(presence.status);
+  if (status === 'offline') return false;
+  const text = (presence.customStatus != null ? String(presence.customStatus) : customStatus(presence)).toLowerCase();
   return statusKeywords().some((word) => text.includes(word));
 }
 
@@ -2097,10 +2122,23 @@ function statusGuild() {
   return bot?.guilds?.cache?.get(guildId) || null;
 }
 
+function lookupPresence(discordId) {
+  const id = String(discordId || '');
+  if (!id || !presenceEnabled) return null;
+  const guild = statusGuild();
+  const live = guild?.presences?.cache?.get(id);
+  if (live) return rememberPresence(live);
+  return presenceByUser.get(id) || null;
+}
+
 function liveStatusIds() {
   const guild = statusGuild();
-  if (!guild) return [];
-  return [...guild.presences.cache.values()].filter(showsStatus).map((presence) => presence.userId);
+  if (guild) seedPresences(guild);
+  const ids = [];
+  for (const [userId, snap] of presenceByUser) {
+    if (showsStatus(snap)) ids.push(userId);
+  }
+  return ids;
 }
 
 function statusDay() {
@@ -2144,7 +2182,7 @@ async function replyStatusRate(interaction) {
   const day = statusDay();
   const linked = ids.map((id) => state.users.find((user) => !user.npc && user.discordId === id)).filter(Boolean);
   const paidToday = state.users.filter((user) => user.statusPaidDay === day).length;
-  const mine = statusGuild()?.presences.cache.get(interaction.user.id);
+  const mine = lookupPresence(interaction.user.id);
   const names = ids.slice(0, 25).map((id) => {
     const user = state.users.find((item) => !item.npc && item.discordId === id);
     return user ? `• ${user.username}` : `• <@${id}> (not linked)`;
@@ -2152,7 +2190,7 @@ async function replyStatusRate(interaction) {
   await interaction.reply({
     content: [
       `**Live now** ${ids.length} member${ids.length === 1 ? '' : 's'} showing the status (${linked.length} linked to a site account)`,
-      `**Your status** ${showsStatus(mine) ? 'Detected ✅' : `Not detected${mine ? ` (currently: "${customStatus(mine) || 'none'}", ${mine.status})` : ' (offline or invisible)'}`}`,
+      `**Your status** ${showsStatus(mine) ? 'Detected ✅' : `Not detected${mine ? ` (currently: "${mine.customStatus || 'none'}", ${mine.status})` : ' (offline or invisible)'}`}`,
       `**Paid today** ${paidToday} · rate ${STATUS_RATE} tokens + ${STATUS_POINTS} Vault Points a day after 1 hour with the status`,
       names.length ? names.join('\n') : '',
     ].filter(Boolean).join('\n'),
@@ -2173,18 +2211,15 @@ async function replyOwnBalance(interaction) {
 
 export function earnStatus(user) {
   const discordId = user?.discordId || '';
-  const presence = presenceEnabled && discordId ? statusGuild()?.presences.cache.get(discordId) : null;
-  const text = customStatus(presence);
-  const live = presenceEnabled && showsStatus(presence);
+  const presence = discordId ? lookupPresence(discordId) : null;
+  const text = presence?.customStatus || '';
+  const live = !!presence && showsStatus(presence);
   const day = statusDay();
   const paid = !!user && user.statusPaidDay === day;
   const minutes = user?.statusDay === day ? Math.floor((user.statusMs || 0) / 60000) : 0;
-  let presenceStatus = null;
-  if (discordId) {
-    if (!presenceEnabled) presenceStatus = 'offline';
-    else if (!presence || presence.status === 'offline') presenceStatus = 'offline';
-    else presenceStatus = presence.status;
-  }
+  const presenceStatus = discordId
+    ? (presenceEnabled ? normalizePresenceStatus(presence?.status) : 'offline')
+    : null;
   return {
     rate: STATUS_RATE,
     points: STATUS_POINTS,
@@ -3408,7 +3443,7 @@ export async function verifyDiscordMember(discordUserId) {
   return true;
 }
 
-export function startDiscordAdmin(withPresence = true) {
+export function startDiscordAdmin(withPresence = true, withMembers = true) {
   const token = String(process.env.DISCORD_BOT_TOKEN || '').trim();
   if (!token) {
     console.log('Discord admin commands are not configured');
@@ -3417,7 +3452,9 @@ export function startDiscordAdmin(withPresence = true) {
   const guildId = String(process.env.DISCORD_GUILD_ID || '').trim();
   botFailed = false;
   const baseIntents = [GatewayIntentBits.Guilds, GatewayIntentBits.AutoModerationExecution, GatewayIntentBits.GuildVoiceStates];
-  const intents = withPresence ? [...baseIntents, GatewayIntentBits.GuildPresences] : baseIntents;
+  const intents = [...baseIntents];
+  if (withPresence) intents.push(GatewayIntentBits.GuildPresences);
+  if (withPresence && withMembers) intents.push(GatewayIntentBits.GuildMembers);
   const client = new Client({ intents });
   bot = client;
   presenceEnabled = withPresence;
@@ -3426,6 +3463,10 @@ export function startDiscordAdmin(withPresence = true) {
       try { tickStatusRewards(); } catch { console.error('Status reward tick failed'); }
     }, STATUS_TICK_MS);
   }
+  client.on('presenceUpdate', (_oldPresence, presence) => {
+    if (!presenceEnabled) return;
+    rememberPresence(presence);
+  });
   client.once('ready', async () => {
     if (!/^\d{5,32}$/.test(guildId)) {
       console.log('DISCORD_GUILD_ID is missing; Discord slash commands were not registered');
@@ -3433,38 +3474,49 @@ export function startDiscordAdmin(withPresence = true) {
     }
     try {
       const rest = new REST({ version: '10' }).setToken(token);
-      await restyleLatestAnnouncement(await client.guilds.fetch(guildId)).catch(() => {});
+      const guild = await client.guilds.fetch(guildId);
+      if (withPresence) {
+        try {
+          if (withMembers) await guild.members.fetch();
+          seedPresences(guild);
+          console.log(`Discord presence sync ready (${presenceByUser.size} cached)`);
+        } catch (error) {
+          seedPresences(guild);
+          console.error('Could not fully seed Discord presence', error?.message || '');
+        }
+      }
+      await restyleLatestAnnouncement(guild).catch(() => {});
       await rest.put(Routes.applicationGuildCommands(client.user.id, guildId), { body: commands });
       console.log('Discord admin slash commands registered');
-      await ensureReviewerRole(await client.guilds.fetch(guildId));
-      await ensureGoldVipRole(await client.guilds.fetch(guildId));
+      await ensureReviewerRole(guild);
+      await ensureGoldVipRole(guild);
       await sweepGoldVip();
       setInterval(() => { sweepGoldVip().catch(() => {}); }, 15 * 60 * 1000);
-      await syncTicketAccess(await client.guilds.fetch(guildId));
+      await syncTicketAccess(guild);
       for (const kind of Object.keys(TICKET_KINDS)) {
-        await ticketCategory(await client.guilds.fetch(guildId), kind);
+        await ticketCategory(guild, kind);
       }
-      await publishCommandGuide(await client.guilds.fetch(guildId));
-      await ensureStaffChat(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up staff-chat'));
-      const filters = await ensureFilters(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up filters'));
+      await publishCommandGuide(guild);
+      await ensureStaffChat(guild).catch(() => console.error('Could not set up staff-chat'));
+      const filters = await ensureFilters(guild).catch(() => console.error('Could not set up filters'));
       filtersChannelId = filters?.id || '';
-      await ensureAutoMod(await client.guilds.fetch(guildId), filters).then(() => console.log('AutoMod rules applied')).catch((error) => console.error('Could not set up AutoMod', error?.message || ''));
+      await ensureAutoMod(guild, filters).then(() => console.log('AutoMod rules applied')).catch((error) => console.error('Could not set up AutoMod', error?.message || ''));
       tickLaunch().catch(() => console.error('Launch member count failed'));
       setInterval(() => { tickLaunch().catch(() => {}); }, 30 * 1000);
       announceWeeklyResults().catch(() => console.error('Weekly Vault announcement failed'));
       setInterval(() => { announceWeeklyResults().catch(() => console.error('Weekly Vault announcement failed')); }, 5 * 60 * 1000);
-      await ensureVoiceChannels(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up voice channels'));
-      await ensureListingsChannel(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up listings channel'));
-      await ensureTournamentRole(await client.guilds.fetch(guildId)).catch(() => {});
-      await ensureProjectRoles(await client.guilds.fetch(guildId)).catch(() => console.error('Could not create Eon/Retrac roles'));
-      await ensureProjectEmojis(await client.guilds.fetch(guildId)).catch(() => console.error('Could not upload project emojis'));
-      await ensureProjectRolesChannel(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up project-roles'));
-      await refreshVerifyPanel(await client.guilds.fetch(guildId)).catch(() => {});
-      await refreshRegionsCopy(await client.guilds.fetch(guildId)).catch(() => {});
-      await sweepTournamentSignups(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up tournaments'));
+      await ensureVoiceChannels(guild).catch(() => console.error('Could not set up voice channels'));
+      await ensureListingsChannel(guild).catch(() => console.error('Could not set up listings channel'));
+      await ensureTournamentRole(guild).catch(() => {});
+      await ensureProjectRoles(guild).catch(() => console.error('Could not create Eon/Retrac roles'));
+      await ensureProjectEmojis(guild).catch(() => console.error('Could not upload project emojis'));
+      await ensureProjectRolesChannel(guild).catch(() => console.error('Could not set up project-roles'));
+      await refreshVerifyPanel(guild).catch(() => {});
+      await refreshRegionsCopy(guild).catch(() => {});
+      await sweepTournamentSignups(guild).catch(() => console.error('Could not set up tournaments'));
       setInterval(() => {
-        const guild = client.guilds.cache.get(guildId);
-        if (guild) sweepTournamentSignups(guild).catch(() => {});
+        const liveGuild = client.guilds.cache.get(guildId);
+        if (liveGuild) sweepTournamentSignups(liveGuild).catch(() => {});
       }, 60 * 1000);
       applyBotStatus();
       console.log('Reviewer role can read message history');
@@ -3555,11 +3607,18 @@ export function startDiscordAdmin(withPresence = true) {
     console.error('Discord admin bot error');
   });
   client.login(token).catch((error) => {
-    if (withPresence && /disallowed intents/i.test(String(error?.message || ''))) {
-      console.error('Presence Intent is off in the Discord Developer Portal; status rewards are disabled');
+    if (/disallowed intents/i.test(String(error?.message || ''))) {
       Promise.resolve().then(() => client.destroy()).catch(() => {});
-      startDiscordAdmin(false);
-      return;
+      if (withPresence && withMembers) {
+        console.error('Server Members Intent may be off; retrying presence without member fetch');
+        startDiscordAdmin(true, false);
+        return;
+      }
+      if (withPresence) {
+        console.error('Presence Intent is off in the Discord Developer Portal; status rewards are disabled');
+        startDiscordAdmin(false, false);
+        return;
+      }
     }
     botFailed = true;
     console.error('Discord admin bot could not log in');

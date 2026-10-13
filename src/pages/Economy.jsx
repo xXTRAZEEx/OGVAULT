@@ -794,7 +794,7 @@ export function Earn() {
         });
     };
     pull();
-    const id = setInterval(pull, 30000);
+    const id = setInterval(pull, 10000);
     return () => { stop = true; clearInterval(id); };
   }, [me?.id]);
 
