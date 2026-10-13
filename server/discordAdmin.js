@@ -194,6 +194,14 @@ const commands = [
     )
     .addStringOption((option) =>
       option
+        .setName('reason')
+        .setDescription('Why the sale is on, e.g. Christmas, Halloween, Opening of the site')
+        .setRequired(false)
+        .setMaxLength(80)
+        .setAutocomplete(true)
+    )
+    .addStringOption((option) =>
+      option
         .setName('item')
         .setDescription('One item, or comma-separated ids/names. Leave blank for the whole shop.')
         .setRequired(false)
@@ -2549,17 +2557,31 @@ async function handleCommand(interaction) {
     if (interaction.commandName === 'discount') {
       const percent = interaction.options.getInteger('percent');
       const rawItem = interaction.options.getString('item');
-      const result = update((state) => {
-        const items = resolveShopItemIds(rawItem);
-        return setShopSale(state, percent, items);
-      });
+      const reason = String(interaction.options.getString('reason') || '').trim();
+      if (percent > 0 && !reason) {
+        await interaction.reply({
+          content: 'Add a **reason** for the sale, like `Opening of the site`, `Christmas`, `Halloween`, or `Easter`.',
+          ephemeral: true,
+        });
+        return;
+      }
+      let result;
+      try {
+        result = update((state) => {
+          const items = resolveShopItemIds(rawItem);
+          return setShopSale(state, percent, items, reason);
+        });
+      } catch (error) {
+        await interaction.reply({ content: error?.message || 'Could not set that sale.', ephemeral: true });
+        return;
+      }
       if (!(result.percent > 0)) {
         await interaction.reply({ content: 'Shop sale cleared. Everything is back to full price.', ephemeral: true });
         return;
       }
       if (!result.items) {
         await interaction.reply({
-          content: `Whole shop is **${result.percent}% off**. Players see the sale price on the site.`,
+          content: `Whole shop is **${result.percent}% off** for **${result.reason}**. Players see a sale notice the first time they open Shop.`,
           ephemeral: true,
         });
         return;
@@ -2568,7 +2590,7 @@ async function handleCommand(interaction) {
         .map((id) => SHOP.find((item) => item.id === id)?.name || id)
         .join(', ');
       await interaction.reply({
-        content: `**${result.percent}% off** on ${names}.`,
+        content: `**${result.percent}% off** on ${names} for **${result.reason}**.`,
         ephemeral: true,
       });
       return;
@@ -3002,7 +3024,7 @@ const COMMAND_GUIDE = [
   ['/inventory', 'Show a site user inventory and add or remove items.'],
   ['/matchmaking', 'Turn new Kill Race listings on or off, with an optional number of hours.'],
   ['/resetleaderboard', 'Fully clear the site Kill Race profit leaderboard (all time, today, week, month). Match history is kept.'],
-  ['/discount', 'Discount the whole shop or named items by a percent. Use 0 to clear the sale.'],
+  ['/discount', 'Discount the whole shop or named items by a percent, with a sale reason. Use 0 to clear.'],
   ['/purge', 'Delete every message in the Discord channel where you run it.'],
   ['/stats', 'Show live players, registered users, open lobbies, games, tokens, and withdrawals.'],
   ['/tokens add', 'Add tokens to one site account.'],
@@ -3526,9 +3548,26 @@ export function startDiscordAdmin(withPresence = true, withMembers = true) {
   });
   client.on('interactionCreate', (interaction) => {
     if (interaction.isAutocomplete() && interaction.commandName === 'discount') {
-      const focused = String(interaction.options.getFocused() || '').toLowerCase();
+      const focused = interaction.options.getFocused(true);
+      const query = String(focused?.value || '').toLowerCase();
+      if (focused?.name === 'reason') {
+        const reasons = [
+          'Opening of the site',
+          'Christmas',
+          'Halloween',
+          'Easter',
+          'New Year',
+          'Weekend sale',
+          'Launch week',
+        ]
+          .filter((reason) => !query || reason.toLowerCase().includes(query))
+          .slice(0, 25)
+          .map((reason) => ({ name: reason, value: reason }));
+        interaction.respond(reasons).catch(() => {});
+        return;
+      }
       const choices = SHOP
-        .filter((item) => !focused || item.name.toLowerCase().includes(focused) || item.id.includes(focused))
+        .filter((item) => !query || item.name.toLowerCase().includes(query) || item.id.includes(query))
         .slice(0, 25)
         .map((item) => ({ name: `${item.name} (${item.price})`, value: item.id }));
       interaction.respond(choices).catch(() => {});

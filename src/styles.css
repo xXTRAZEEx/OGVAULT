@@ -1232,6 +1232,19 @@ canvas { border-radius: 24px; background: #07080d; width: 100%; height: auto; }
   color: #f5e6c8;
   font-weight: 700;
 }
+.shop-sale-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 2px 2px;
+}
+.shop-sale-modal-lead {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--text);
+}
+.shop-sale-modal .btn { width: 100%; min-height: 44px; }
 .shop-sale-flag {
   position: absolute;
   top: 12px;

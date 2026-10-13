@@ -45,6 +45,8 @@ import {
   resolveMatch,
   settleAgreed,
   sendTip,
+  shopCatalog,
+  shopSale,
   purchaseAmount,
   requestWithdrawal,
   settleWithdrawals,
@@ -53,14 +55,14 @@ import {
   walletSnapshot,
 } from './logic.js';
 import { blackjackView, dealBlackjack, doubleBlackjack, hitBlackjack, standBlackjack } from './blackjack.js';
-import { SHOP, fail, load, rid, round, update } from './store.js';
+import { fail, load, rid, round, update } from './store.js';
 import { assertCleanUsername, offensiveName } from './names.js';
 import { IP_MESSAGE, VPN_MESSAGE, assertIpFree, claimIp, clientIp, ipOwner, isVpn, ownsIp } from './guard.js';
 import { checkoutOrigin, createCoinCheckout, handleStripeWebhook } from './checkout.js';
 import { createNowInvoice, handleNowIpn } from './nowpayments.js';
 import { scanElims } from './cupScan.js';
 import { parseCupReplay } from './cupReplay.js';
-import { clearPublicChat, earnStatus, notifyWithdrawal, sendClipReview, setAnnouncementHook, setChatClearedHook, setOnlineCount, setReviewSettleHook, startDiscordAdmin, syncGoldVip, verifyDiscordMember } from './discordAdmin.js';
+import { clearPublicChat, earnStatus, notifyListingCreated, notifyWithdrawal, sendClipReview, setAnnouncementHook, setChatClearedHook, setOnlineCount, setReviewSettleHook, startDiscordAdmin, syncGoldVip, verifyDiscordMember } from './discordAdmin.js';
 import {
   consumeDiscordState,
   createDiscordState,
@@ -380,7 +382,7 @@ function homePayload(viewer, timeZone) {
       .map((match) => matchDto(fresh, match, me?.id))
       .sort((a, b) => b.createdAt - a.createdAt),
     tournaments: fresh.tournaments.map((cup) => cupSummary(fresh, cup)),
-    shop: SHOP,
+    shop: shopCatalog(fresh),
   };
 }
 
@@ -1280,10 +1282,11 @@ app.post(
       const match = freshMatch({ host: user, entry, project, mode, region, platform, firstTo, currency });
       chargeEntry(state, user, match);
       state.matches.unshift(match);
-      return { match: matchDto(state, match, user.id), user: userDto(user, { self: true }) };
+      return { match: matchDto(state, match, user.id), user: userDto(user, { self: true }), host: user, created: match };
     });
     pingLobby();
-    res.json(result);
+    notifyListingCreated(result.created, result.host).catch(() => {});
+    res.json({ match: result.match, user: result.user });
   })
 );
 
@@ -1312,12 +1315,13 @@ app.post(
         debit(state, user, 1, 'entry', {});
         const match = freshMatch({ host: user, entry: 1, mode: MODES[0], region: 'EU', firstTo: 1 });
         state.matches.unshift(match);
-        return { match: matchDto(state, match, user.id), user: userDto(user, { self: true }) };
+        return { match: matchDto(state, match, user.id), user: userDto(user, { self: true }), host: user, created: match };
       }
       fail(400, 'No open listing you can afford');
     });
     pingLobby();
-    res.json(result);
+    if (result.created) notifyListingCreated(result.created, result.host).catch(() => {});
+    res.json({ match: result.match, user: result.user });
   })
 );
 
@@ -2171,7 +2175,10 @@ app.post(
 
 app.get(
   '/api/shop',
-  route((_req, res) => res.json({ shop: SHOP }))
+  route((_req, res) => {
+    const state = load();
+    res.json({ shop: shopCatalog(state), sale: shopSale(state) });
+  })
 );
 
 app.post(

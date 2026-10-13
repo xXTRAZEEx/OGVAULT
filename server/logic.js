@@ -230,13 +230,26 @@ export const POINTS = { daily: 1, played: 0, win: 5, status: 2 };
 /** Weekly Vault ranks Kill Race point gains only — not daily/status claims. */
 const RANKED_POINT_TYPES = new Set(['match', 'win']);
 
+export function leaderboardSince(state) {
+  const at = Number(state?.leaderboardResetAt) || 0;
+  return at > 0 ? at : 0;
+}
+
 export function battleTokenProfit(state, userId, start = 0, end = Number.POSITIVE_INFINITY) {
+  const from = Math.max(start, leaderboardSince(state));
   let total = 0;
   for (const row of state.history || []) {
-    if (row.at < start || row.at >= end || row.winnerId !== userId || row.practice || row.currency === 'points') continue;
+    if (row.at < from || row.at >= end || row.winnerId !== userId || row.practice || row.currency === 'points') continue;
     total = round(total + Math.max(0, round((row.payout || 0) - row.entry)));
   }
   return total;
+}
+
+/** Clears the public Kill Race profit leaderboard. Match history is kept. */
+export function resetLeaderboard(state) {
+  state.leaderboardResetAt = Date.now();
+  recomputeBattleEarned(state);
+  return state.leaderboardResetAt;
 }
 
 export function recomputeBattleEarned(state) {
@@ -867,15 +880,94 @@ export function ensureCosmetics(user) {
   if (isColorKey(user.nameColor) && !shopRevoked(user, `color-${user.nameColor}`)) pushUnique(user.ownedColors, user.nameColor);
 }
 
+export function shopSale(state) {
+  const sale = state?.shopSale;
+  if (!sale || !(sale.percent > 0)) return null;
+  const percent = Math.min(90, Math.max(0, Math.round(Number(sale.percent) || 0)));
+  if (!(percent > 0)) return null;
+  const items = Array.isArray(sale.items) ? sale.items.filter(Boolean) : null;
+  const reason = String(sale.reason || '').trim().slice(0, 80);
+  const id = String(sale.id || sale.at || '');
+  return {
+    percent,
+    items: items?.length ? items : null,
+    reason: reason || '',
+    id: id || null,
+    at: Number(sale.at) || null,
+  };
+}
+
+export function shopUnitPrice(state, item) {
+  const base = round(Number(item?.price) || 0);
+  const sale = shopSale(state);
+  if (!sale || !item) return base;
+  if (sale.items && !sale.items.includes(item.id)) return base;
+  const next = round(base * (1 - sale.percent / 100));
+  return Math.max(0, next);
+}
+
+export function shopCatalog(state) {
+  const sale = shopSale(state);
+  return SHOP.map((item) => {
+    const price = shopUnitPrice(state, item);
+    const discount = sale && (!sale.items || sale.items.includes(item.id)) ? sale.percent : 0;
+    return {
+      ...item,
+      basePrice: item.price,
+      price,
+      discount,
+      onSale: discount > 0 && price < item.price,
+    };
+  });
+}
+
+/** percent 0 clears. items null/empty = whole shop; otherwise specific ids. */
+export function setShopSale(state, percent, itemIds = null, reason = '') {
+  const value = Math.min(90, Math.max(0, Math.round(Number(percent) || 0)));
+  if (!(value > 0)) {
+    state.shopSale = null;
+    return { percent: 0, items: null, reason: '', id: null, at: null };
+  }
+  const items = Array.isArray(itemIds) && itemIds.length ? [...new Set(itemIds)] : null;
+  if (items) {
+    for (const id of items) {
+      if (!SHOP.some((entry) => entry.id === id)) fail(400, `Unknown shop item: ${id}`);
+    }
+  }
+  const note = String(reason || '').trim().slice(0, 80);
+  if (!note) fail(400, 'Give a reason for the sale, like Christmas or Opening of the site.');
+  const at = Date.now();
+  const id = `sale-${at}`;
+  state.shopSale = { percent: value, items, reason: note, id, at };
+  return { percent: value, items, reason: note, id, at };
+}
+
+export function resolveShopItemIds(raw) {
+  const text = String(raw || '').trim();
+  if (!text || /^all$/i.test(text)) return null;
+  const parts = text.split(/[,|;]/).map((part) => part.trim()).filter(Boolean);
+  if (!parts.length) return null;
+  const ids = [];
+  for (const part of parts) {
+    const found = SHOP.find(
+      (item) => item.id === part || item.name.toLowerCase() === part.toLowerCase(),
+    );
+    if (!found) fail(400, `Unknown shop item: ${part}`);
+    ids.push(found.id);
+  }
+  return [...new Set(ids)];
+}
+
 export function buyItem(state, user, itemId) {
-  const item = SHOP.find((entry) => entry.id === itemId);
+  const catalog = shopCatalog(state);
+  const item = catalog.find((entry) => entry.id === itemId);
   if (!item) fail(404, 'That item is not in the shop');
   ensureCosmetics(user);
   if (item.id === 'vip' && isVip(user)) fail(400, 'OG VIP is already active');
   if (PORTRAIT_IDS.includes(item.id) && user.ownedAvatars.includes(item.id)) fail(400, 'You already own that portrait');
   if (MARK_IDS.includes(item.id) && user.ownedMarks.includes(item.id)) fail(400, 'You already own that mark');
   if (COLOR_IDS[item.id] && user.ownedColors.includes(COLOR_IDS[item.id])) fail(400, 'You already own that name color');
-  debit(state, user, item.price, 'shop', { item: item.id });
+  debit(state, user, item.price, 'shop', { item: item.id, basePrice: item.basePrice, discount: item.discount || 0 });
   forgetRevoke(user, item.id);
   if (item.id === 'vip') {
     user.vipUntil = Date.now() + 30 * 86400000;

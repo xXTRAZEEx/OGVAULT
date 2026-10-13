@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useApp } from '../App';
 import { ago, format, formatDate, useNow } from '../format';
-import { Amount, Avatar, FrameFx, PageHead, Points, Select, Token } from '../ui';
+import { Amount, Avatar, FrameFx, Modal, PageHead, Points, Select, Token } from '../ui';
 import { confetti, sfx } from '../fx';
 
 const TX = {
@@ -208,16 +208,25 @@ function ShopPreview({ id }) {
   return null;
 }
 
+const SALE_SEEN_KEY = 'ogv_shop_sale_seen';
+
 export function Shop() {
   const { me, setAuth, setMe, toast } = useApp();
   const now = useNow(60000);
   const [shop, setShop] = useState([]);
   const owned = inventoryRows(me, now);
   const [sale, setSale] = useState(null);
+  const [saleNotice, setSaleNotice] = useState(null);
   useEffect(() => {
     api('/api/shop').then((data) => {
       setShop(data.shop || []);
-      setSale(data.sale || null);
+      const next = data.sale || null;
+      setSale(next);
+      if (next?.percent > 0) {
+        const saleKey = String(next.id || `${next.percent}-${next.reason || ''}-${next.at || ''}`);
+        const seen = localStorage.getItem(SALE_SEEN_KEY) || '';
+        if (saleKey && seen !== saleKey) setSaleNotice(next);
+      }
     });
   }, []);
   useEffect(() => {
@@ -225,6 +234,14 @@ export function Shop() {
       document.getElementById('inventory')?.scrollIntoView();
     }
   }, []);
+
+  function dismissSaleNotice() {
+    if (saleNotice) {
+      const saleKey = String(saleNotice.id || `${saleNotice.percent}-${saleNotice.reason || ''}-${saleNotice.at || ''}`);
+      if (saleKey) localStorage.setItem(SALE_SEEN_KEY, saleKey);
+    }
+    setSaleNotice(null);
+  }
 
   async function wear(slot, id, equip) {
     try {
@@ -237,13 +254,33 @@ export function Shop() {
   }
 
   const saleNote = sale?.percent > 0
-    ? (sale.items?.length
-      ? `${sale.percent}% off selected items`
-      : `${sale.percent}% off the whole shop`)
+    ? [
+        sale.reason ? `${sale.reason} · ` : '',
+        sale.items?.length
+          ? `${sale.percent}% off selected items`
+          : `${sale.percent}% off the whole shop`,
+      ].join('')
     : '';
 
   return (
     <div className="stack-lg">
+      {saleNotice && (
+        <Modal title="Shop is on discount" onClose={dismissSaleNotice}>
+          <div className="shop-sale-modal">
+            <p className="shop-sale-modal-lead">
+              {saleNotice.reason
+                ? <>{saleNotice.reason} sale is live — <b>{saleNotice.percent}% off</b>.</>
+                : <>The shop is on sale — <b>{saleNotice.percent}% off</b>.</>}
+            </p>
+            <p className="muted">
+              {saleNotice.items?.length
+                ? 'Selected items show a sale tag and discounted token price.'
+                : 'Discounted prices are already showing on shop items.'}
+            </p>
+            <button className="btn" type="button" onClick={dismissSaleNotice}>Browse the shop</button>
+          </div>
+        </Modal>
+      )}
       <PageHead kicker="Style and edge" title="Shop" text="Spend tokens on VIP, snipes, shields, and marks. Nothing here bills a card." />
       {saleNote && <p className="shop-sale-banner">{saleNote}</p>}
       <section className="panel" id="inventory">
