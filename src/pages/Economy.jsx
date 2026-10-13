@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useApp } from '../App';
 import { ago, format, formatDate, useNow } from '../format';
-import { Amount, FrameFx, PageHead, Points, Select, Token } from '../ui';
+import { Amount, Avatar, FrameFx, PageHead, Points, Select, Token } from '../ui';
 import { confetti, sfx } from '../fx';
 
 const TX = {
@@ -767,6 +767,14 @@ export function Rewards() {
   );
 }
 
+function presenceLabel(value) {
+  if (value === 'online') return 'Online';
+  if (value === 'idle') return 'Idle';
+  if (value === 'dnd') return 'Do Not Disturb';
+  if (value === 'offline') return 'Offline / invisible';
+  return 'Unknown';
+}
+
 export function Earn() {
   const { me, setAuth } = useApp();
   const [status, setStatus] = useState(null);
@@ -795,6 +803,17 @@ export function Earn() {
   const need = status?.needMinutes ?? 60;
   const minutes = status?.minutes ?? 0;
   const progress = Math.min(100, Math.round((minutes / need) * 100));
+  const linked = !!(me && status?.linked);
+  const profile = linked
+    ? {
+        username: status.username || me.username,
+        discordAvatarUrl: status.discordAvatarUrl || me.discordAvatarUrl,
+        avatar: status.avatar || me.avatar,
+        vip: status.vip ?? me.vip,
+        nameColor: status.nameColor || me.nameColor,
+        chatIcon: status.chatIcon || me.chatIcon,
+      }
+    : null;
 
   return (
     <div className="stack-lg">
@@ -804,20 +823,61 @@ export function Earn() {
         text={`Put ogvault.co.uk in your Discord custom status for 1 hour and get ${rate} tokens plus ${points} Vault Points once a day.`}
       />
       {error && <p className="error">{error}</p>}
-      <div className="wallet-grid">
-        <article className="panel">
+      <div className="wallet-grid earn-grid">
+        <article className={`panel earn-card ${linked ? 'linked' : ''}`}>
           <h2>Account</h2>
-          <p className="earn-stat">{!me ? 'Sign in first' : status?.linked ? `Linked as ${status.username}` : 'Discord not linked'}</p>
-          <p className="muted">Sign in with Discord so the status can pay into your balance.</p>
+          {linked ? (
+            <div className="earn-profile">
+              <Avatar user={profile} size={56} />
+              <div>
+                <p className="earn-stat">{status.username}</p>
+                <p className="muted">
+                  {status.discordName || status.discordUsername
+                    ? `Discord · ${status.discordName || `@${status.discordUsername}`}`
+                    : 'Discord linked'}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="earn-stat">{!me ? 'Sign in first' : 'Discord not linked'}</p>
+              <p className="muted">Sign in with Discord so the status can pay into your balance.</p>
+            </>
+          )}
           {!me && <button className="btn" type="button" onClick={() => setAuth('in')}>Sign in</button>}
           {me && !status?.linked && <button className="btn" type="button" onClick={() => setAuth('in')}>Link Discord</button>}
         </article>
-        <article className="panel">
+        <article className={`panel earn-card ${status?.live ? 'live' : ''}`}>
           <h2>Your status</h2>
-          <p className={`earn-stat ${status?.live ? 'good' : ''}`}>{status?.live ? 'Detected ✅' : 'Not detected'}</p>
-          <p className="muted">Stay Online, Idle, or Do Not Disturb. Invisible does not count.</p>
+          {linked ? (
+            <>
+              <div className="earn-detect">
+                <span className={`earn-pill ${status?.live ? 'on' : 'off'}`}>
+                  {status?.live ? 'Detected' : 'Not detected'}
+                </span>
+                <span className={`earn-presence ${status?.presenceStatus || 'offline'}`}>
+                  {presenceLabel(status?.presenceStatus)}
+                </span>
+              </div>
+              <p className="earn-custom">
+                {status?.customStatus
+                  ? <>Status · <b>{status.customStatus}</b></>
+                  : 'No custom status set'}
+              </p>
+              <p className="muted">
+                {status?.live
+                  ? 'ogvault.co.uk is in your custom status. Keep Discord Online, Idle, or DND.'
+                  : 'Add ogvault.co.uk to your custom status. Invisible does not count.'}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="earn-stat">Waiting for link</p>
+              <p className="muted">Link Discord first, then this card shows if your status is detected.</p>
+            </>
+          )}
         </article>
-        <article className="panel">
+        <article className="panel earn-card">
           <h2>Today</h2>
           <p className={`earn-stat ${status?.paid ? 'good' : ''}`}>
             {status?.paid ? 'Paid ✅' : `${minutes} / ${need} minutes`}
