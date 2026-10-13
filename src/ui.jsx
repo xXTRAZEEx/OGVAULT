@@ -159,24 +159,29 @@ function NameMark({ icon }) {
   return <img className={`name-mark ${kind}`} src={src} alt="" />;
 }
 
-export function FrameFx({ heat = false, frost = false, vip = false }) {
-  if (!heat && !frost && !vip) return null;
-  const flakes = [0, 1, 2, 3, 4];
+export function FrameFx({ heat = false, frost = false, vip = false, blood = false }) {
+  if (!heat && !frost && !vip && !blood) return null;
+  const flakes = [0, 1, 2, 3, 4, 5];
   return (
     <>
       {heat && (
-        <span className="frame-fx fx-fire" aria-hidden="true">
-          <i /><i /><i />
+        <span className="frame-fx fx-amber" aria-hidden="true">
+          {flakes.map((n) => <i key={n} />)}
+        </span>
+      )}
+      {blood && (
+        <span className="frame-fx fx-blood" aria-hidden="true">
+          {flakes.map((n) => <i key={n} />)}
         </span>
       )}
       {frost && (
         <span className="frame-fx fx-snow" aria-hidden="true">
-          {flakes.map((n) => <i key={n} />)}
+          {flakes.slice(0, 5).map((n) => <i key={n} />)}
         </span>
       )}
       {vip && (
         <span className="frame-fx fx-gold" aria-hidden="true">
-          {flakes.map((n) => <i key={n} />)}
+          {flakes.slice(0, 5).map((n) => <i key={n} />)}
         </span>
       )}
     </>
@@ -193,6 +198,7 @@ export function Avatar({ user, size = 40 }) {
     <FrameFx
       heat={user?.avatar === 'avatar-heat'}
       frost={user?.avatar === 'avatar-frost'}
+      blood={user?.avatar === 'avatar-blood'}
       vip={vipFrame}
     />
   );

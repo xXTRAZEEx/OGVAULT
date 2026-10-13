@@ -184,7 +184,7 @@ function ShopPreview({ id }) {
       <div className="shop-stage" aria-hidden="true">
         <span className={`shop-ava ring-${id.slice(7)}`}>
           A
-          <FrameFx heat={id === 'avatar-heat'} frost={id === 'avatar-frost'} />
+          <FrameFx heat={id === 'avatar-heat'} frost={id === 'avatar-frost'} blood={id === 'avatar-blood'} />
         </span>
       </div>
     );
