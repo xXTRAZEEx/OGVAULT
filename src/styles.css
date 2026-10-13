@@ -1257,13 +1257,33 @@ canvas { border-radius: 24px; background: #07080d; width: 100%; height: auto; }
   border: 0;
   border-radius: 12px;
   font-weight: 700;
+  color: #fff;
   background: linear-gradient(135deg, color-mix(in srgb, var(--shop-accent) 78%, #2f6bff), color-mix(in srgb, var(--shop-accent) 32%, #1d4ed8));
   box-shadow: 0 8px 18px color-mix(in srgb, var(--shop-accent) 28%, transparent);
 }
-.shop-buy.sale {
+.shop-buy:hover,
+.shop-buy:focus-visible,
+.btn.shop-buy:hover,
+.btn.shop-buy:focus-visible {
+  color: #fff;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--shop-accent) 88%, #fff), color-mix(in srgb, var(--shop-accent) 42%, #1d4ed8));
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--shop-accent) 36%, transparent);
+  filter: brightness(1.06);
+}
+.shop-buy::after,
+.btn.shop-buy::after { display: none; }
+.shop-buy.sale,
+.btn.shop-buy.sale:hover,
+.btn.shop-buy.sale:focus-visible {
   background: linear-gradient(135deg, #f5c451, #ff8a3d);
   color: #1a1208;
   box-shadow: 0 8px 18px rgba(245, 196, 81, 0.3);
+  filter: none;
+}
+.btn.shop-buy.sale:hover,
+.btn.shop-buy.sale:focus-visible {
+  filter: brightness(1.05);
+  box-shadow: 0 10px 22px rgba(245, 196, 81, 0.38);
 }
 .shop-was {
   text-decoration: line-through;
