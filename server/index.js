@@ -2446,7 +2446,11 @@ wss.on('connection', (ws) => {
       if (text === '/clear') {
         const state = load();
         const user = state.users.find((item) => item.id === ws.userId);
-        const admins = String(process.env.DISCORD_ADMIN_IDS || '').split(/[,\s]+/).map((id) => id.trim()).filter(Boolean);
+        const admins = String(process.env.DISCORD_ADMIN_IDS || '')
+          .split(/[,\s]+/)
+          .concat(String(process.env.DISCORD_MANAGER_IDS || '').split(/[,\s]+/))
+          .map((id) => id.trim())
+          .filter(Boolean);
         if (!user || !admins.includes(String(user.discordId || ''))) {
           return send(ws, { type: 'error', error: 'You cannot clear the chat' });
         }

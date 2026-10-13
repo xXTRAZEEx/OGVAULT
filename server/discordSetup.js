@@ -1,9 +1,12 @@
 const guildId = String(process.env.DISCORD_GUILD_ID || '').trim();
 const token = String(process.env.DISCORD_BOT_TOKEN || '').trim();
-const adminIds = String(process.env.DISCORD_ADMIN_IDS || '')
-  .split(',')
+const parseIds = (raw) => String(raw || '')
+  .split(/[,\s]+/)
   .map((id) => id.trim())
   .filter((id) => /^\d{5,32}$/.test(id));
+const adminIds = parseIds(process.env.DISCORD_ADMIN_IDS);
+const managerIds = parseIds(process.env.DISCORD_MANAGER_IDS);
+const ownerLevelIds = [...new Set([...adminIds, ...managerIds])];
 
 const VIEW = 1n << 10n;
 const SEND = 1n << 11n;
@@ -134,6 +137,7 @@ async function main() {
   const everyone = roles.find((role) => role.id === guildId);
   const bot = roles.find((role) => role.tags?.bot_id);
   const owner = await ensureRole(roles, { name: 'Owner', color: 0xf1c40f, hoist: true, permissions: ADMIN });
+  const management = await ensureRole(roles, { name: 'Management', color: 0xe67e22, hoist: true, permissions: ADMIN });
   const member = await ensureRole(roles, { name: 'Member', color: 0x5865f2, hoist: true, permissions: memberBits });
   const na = await ensureRole(roles, { name: 'NA', color: 0x3b82f6, hoist: true, mentionable: true, permissions: 0n });
   const eu = await ensureRole(roles, { name: 'EU', color: 0x22c55e, hoist: true, mentionable: true, permissions: 0n });
@@ -143,13 +147,17 @@ async function main() {
   const creator = await ensureRole(roles, { name: 'Content Creator', color: 0xe84393, hoist: true, mentionable: true, permissions: 0n });
   const helper = await ensureRole(roles, { name: 'Helper', color: 0xe67e22, hoist: true, mentionable: true, permissions: 0n });
 
-  const ordered = [everyone, na, eu, eon, retrac, member, creator, helper, reviewer, owner, bot].filter(Boolean);
+  const ordered = [everyone, na, eu, eon, retrac, member, creator, helper, reviewer, management, owner, bot].filter(Boolean);
   await api('PATCH', `/guilds/${guildId}/roles`, ordered.map((role, position) => ({ id: role.id, position })));
   console.log('roles ordered');
 
   for (const userId of adminIds) {
     await api('PUT', `/guilds/${guildId}/members/${userId}/roles/${owner.id}`);
     console.log('owner assigned');
+  }
+  for (const userId of managerIds) {
+    await api('PUT', `/guilds/${guildId}/members/${userId}/roles/${management.id}`);
+    console.log('management assigned');
   }
 
   let channels = await api('GET', `/guilds/${guildId}/channels`);
@@ -186,10 +194,11 @@ async function main() {
     overwrite(member.id, 0n, VIEW),
     ...[helper, reviewer, creator].filter(Boolean).map((role) => overwrite(role.id, 0n, VIEW)),
     overwrite(owner.id, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n),
+    overwrite(management.id, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n),
     ...(bot ? [overwrite(bot.id, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n)] : []),
-    ...adminIds.map((userId) => overwrite(userId, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n, 1)),
+    ...ownerLevelIds.map((userId) => overwrite(userId, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n, 1)),
   ];
-  await ensureText(channels, start, 'joins', 'Private join log. Owner only.', ownerOnly);
+  await ensureText(channels, start, 'joins', 'Private join log. Owner and Management only.', ownerOnly);
   const welcome = await ensureText(channels, start, 'welcome', 'Start here. 18+.', gateView);
   const rulesChannel = await ensureText(channels, start, 'rules', 'Server rules.', gateView);
   const guide = await ensureText(channels, start, 'how-to-play', 'How an OGVAULT Kill Race works.', gateView);
@@ -204,6 +213,7 @@ async function main() {
     overwrite(member.id, VIEW | HISTORY, SEND | REACTIONS | EMBED | FILES),
     ...[helper, reviewer, creator, na, eu].filter(Boolean).map((role) => overwrite(role.id, 0n, SEND | REACTIONS | EMBED | FILES)),
     overwrite(owner.id, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n),
+    overwrite(management.id, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n),
     ...(bot ? [overwrite(bot.id, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n)] : []),
   ]);
   const announcements = await ensureText(channels, news, 'announcements', 'Updates from OGVAULT. Members can read, not type.', [
@@ -211,12 +221,14 @@ async function main() {
     overwrite(member.id, VIEW | HISTORY | REACTIONS, SEND),
     ...[helper, reviewer, creator, na, eu].filter(Boolean).map((role) => overwrite(role.id, 0n, SEND)),
     overwrite(owner.id, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n),
+    overwrite(management.id, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n),
   ]);
   await ensureText(channels, news, 'tournaments', 'Private games. Press Register to get a seat.', [
     overwrite(everyone.id, 0n, VIEW | SEND),
     overwrite(member.id, VIEW | HISTORY | REACTIONS, SEND),
     ...[helper, reviewer, creator, na, eu].filter(Boolean).map((role) => overwrite(role.id, 0n, SEND)),
     overwrite(owner.id, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n),
+    overwrite(management.id, VIEW | HISTORY | SEND | EMBED | FILES | REACTIONS, 0n),
   ]);
   const supportPanel = await ensureText(
     channels,

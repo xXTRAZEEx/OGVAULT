@@ -47,7 +47,11 @@ export function assertIpFree(state, ip, user) {
 }
 
 function exempt(user) {
-  const admins = String(process.env.DISCORD_ADMIN_IDS || '').split(',').map((id) => id.trim()).filter(Boolean);
+  const admins = String(process.env.DISCORD_ADMIN_IDS || '')
+    .split(/[,\s]+/)
+    .concat(String(process.env.DISCORD_MANAGER_IDS || '').split(/[,\s]+/))
+    .map((id) => id.trim())
+    .filter(Boolean);
   return !!user?.discordId && admins.includes(String(user.discordId));
 }
 

@@ -59,6 +59,7 @@ const REVIEWER_CHANNEL_ID = '1556086496207962122';
 const REVIEWER_ROLE_NAME = 'Reviewer';
 const REVIEWER_COLOR = 0x57f287;
 const REVIEWER_PERMISSIONS = [PermissionFlagsBits.ReadMessageHistory];
+const OWNER_LEVEL_ROLES = ['Owner', 'Management'];
 
 function adminOnly(builder) {
   return builder.setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
@@ -344,11 +345,60 @@ const commands = [
     )),
 ].map((command) => command.toJSON());
 
-function adminIds() {
-  return String(process.env.DISCORD_ADMIN_IDS || '')
-    .split(',')
+function parseIdList(raw) {
+  return String(raw || '')
+    .split(/[,\s]+/)
     .map((id) => id.trim())
     .filter((id) => /^\d{5,32}$/.test(id));
+}
+
+/** Site + Discord owner-level IDs: primary owners and management alts. */
+function adminIds() {
+  return [...new Set([...parseIdList(process.env.DISCORD_ADMIN_IDS), ...parseIdList(process.env.DISCORD_MANAGER_IDS)])];
+}
+
+function hasOwnerLevelRole(member) {
+  return !!member?.roles?.cache?.some((role) => OWNER_LEVEL_ROLES.includes(role.name));
+}
+
+async function isOwnerLevel(interactionOrMember) {
+  const userId = interactionOrMember?.user?.id || interactionOrMember?.id;
+  if (userId && adminIds().includes(String(userId))) return true;
+  if (hasOwnerLevelRole(interactionOrMember?.member || interactionOrMember)) return true;
+  const guild = interactionOrMember?.guild;
+  if (!guild || !userId) return false;
+  const member = await guild.members.fetch(userId).catch(() => null);
+  return hasOwnerLevelRole(member);
+}
+
+async function ensureManagementRole(guild) {
+  const existing = await roleByName(guild, 'Management');
+  if (existing) {
+    if (!existing.permissions.has(PermissionFlagsBits.Administrator)) {
+      await existing.setPermissions(PermissionFlagsBits.Administrator, 'Management matches Owner access').catch(() => {});
+    }
+    return existing;
+  }
+  return guild.roles.create({
+    name: 'Management',
+    color: 0xe67e22,
+    hoist: true,
+    mentionable: false,
+    permissions: [PermissionFlagsBits.Administrator],
+    reason: 'Owner-level management access for trusted alts',
+  });
+}
+
+async function syncManagementAssignments(guild) {
+  const role = await ensureManagementRole(guild);
+  const ids = parseIdList(process.env.DISCORD_MANAGER_IDS);
+  for (const userId of ids) {
+    const member = await guild.members.fetch(userId).catch(() => null);
+    if (member && !member.roles.cache.has(role.id)) {
+      await member.roles.add(role, 'DISCORD_MANAGER_IDS').catch(() => {});
+    }
+  }
+  return role;
 }
 
 function money(raw) {
@@ -570,12 +620,14 @@ async function ensureTournamentsChannel(guild) {
   const existing = channels.find((channel) => channel.type === ChannelType.GuildText && channel.name === 'tournaments');
   const roles = await guild.roles.fetch();
   const owner = roles.find((role) => role.name === 'Owner');
+  const management = await ensureManagementRole(guild);
   const member = roles.find((role) => role.name === 'Member');
+  const talk = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks];
   const overwrites = [
     { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
-    { id: guild.members.me.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] },
+    { id: guild.members.me.id, allow: talk },
     ...(member ? [{ id: member.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] }] : []),
-    ...(owner ? [{ id: owner.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks] }] : []),
+    ...[owner, management].filter(Boolean).map((role) => ({ id: role.id, allow: talk })),
   ];
   if (existing) {
     await existing.permissionOverwrites.set(overwrites).catch(() => {});
@@ -1569,7 +1621,7 @@ function freezeAwardButtons(rows) {
 
 async function handleAward(interaction) {
   const userId = interaction.user.id;
-  if (!adminIds().includes(userId) && !memberHasReviewerRole(interaction)) {
+  if (!(await isOwnerLevel(interaction)) && !memberHasReviewerRole(interaction)) {
     await interaction.reply({ content: 'You cannot use this', ephemeral: true });
     return;
   }
@@ -1638,7 +1690,7 @@ async function handleAward(interaction) {
 }
 
 async function handleInventoryButton(interaction) {
-  if (!adminIds().includes(interaction.user.id)) {
+  if (!(await isOwnerLevel(interaction))) {
     await interaction.reply({ content: 'You cannot use this', ephemeral: true });
     return;
   }
@@ -1666,7 +1718,7 @@ async function handleInventoryButton(interaction) {
 }
 
 async function handleInventoryAdd(interaction) {
-  if (!adminIds().includes(interaction.user.id)) {
+  if (!(await isOwnerLevel(interaction))) {
     await interaction.reply({ content: 'You cannot use this', ephemeral: true });
     return;
   }
@@ -1745,7 +1797,8 @@ async function ticketAccessRoles(guild) {
   const helper = await ensureNamedRole(guild, 'Helper', 0xe67e22);
   const creator = await ensureNamedRole(guild, 'Content Creator', 0xe84393);
   const owner = await roleByName(guild, 'Owner');
-  return { helper, creator, owner };
+  const management = await ensureManagementRole(guild);
+  return { helper, creator, owner, management };
 }
 
 async function allowTicketStaff(channel, roles) {
@@ -1761,9 +1814,9 @@ async function allowTicketStaff(channel, roles) {
 }
 
 async function syncTicketAccess(guild) {
-  const { helper, owner } = await ticketAccessRoles(guild);
+  const { helper, owner, management } = await ticketAccessRoles(guild);
   const channels = await guild.channels.fetch();
-  const staff = [helper, owner].filter(Boolean);
+  const staff = [helper, owner, management].filter(Boolean);
   for (const channel of channels.values()) {
     const ticketCategories = new Set(Object.values(TICKET_KINDS).map((choice) => choice.category));
     const isTicket = ticketCategories.has(channel.name) || String(channel.topic || '').startsWith('ticket:');
@@ -1777,13 +1830,13 @@ async function ticketCategory(guild, kind) {
   const channels = await guild.channels.fetch();
   const existing = channels.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === choice.category);
   if (existing) return existing;
-  const { helper, owner } = await ticketAccessRoles(guild);
+  const { helper, owner, management } = await ticketAccessRoles(guild);
   return guild.channels.create({
     name: choice.category,
     type: ChannelType.GuildCategory,
     permissionOverwrites: [
       { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
-      ...[owner, helper].filter(Boolean).map((role) => ({ id: role.id, allow: TICKET_ACCESS })),
+      ...[owner, management, helper].filter(Boolean).map((role) => ({ id: role.id, allow: TICKET_ACCESS })),
     ],
   });
 }
@@ -1860,11 +1913,10 @@ function ticketModal(kind, staffRole = '') {
 }
 
 async function canCloseTicket(interaction, opener) {
-  if (interaction.user.id === opener || adminIds().includes(interaction.user.id)) return true;
-  const owner = await roleByName(interaction.guild, 'Owner');
+  if (interaction.user.id === opener || (await isOwnerLevel(interaction))) return true;
   const helper = await roleByName(interaction.guild, 'Helper');
   const roles = interaction.member?.roles?.cache;
-  return !!roles && ((owner && roles.has(owner.id)) || (helper && roles.has(helper.id)));
+  return !!roles && !!helper && roles.has(helper.id);
 }
 
 function ticketCard({ choice, detail, proof, platform, followers, profile, account, username, staff }) {
@@ -1937,7 +1989,7 @@ async function handleTicket(interaction, id) {
     await interaction.editReply({ content: `You already have a ticket: ${existing}` });
     return;
   }
-  const { helper, owner } = await ticketAccessRoles(guild);
+  const { helper, owner, management } = await ticketAccessRoles(guild);
   const category = await ticketCategory(guild, kind);
   const slug = String(interaction.user.username || 'user').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 16) || 'user';
   const field = (name, max) => interaction.fields.getTextInputValue(name).slice(0, max) || '—';
@@ -1959,7 +2011,7 @@ async function handleTicket(interaction, id) {
     permissionOverwrites: [
       { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
       { id: interaction.user.id, allow: TICKET_ACCESS },
-      ...[owner, helper].filter(Boolean).map((role) => ({ id: role.id, allow: TICKET_ACCESS })),
+      ...[owner, management, helper].filter(Boolean).map((role) => ({ id: role.id, allow: TICKET_ACCESS })),
     ],
   });
   if (channel.parentId !== category.id) await channel.setParent(category.id, { lockPermissions: false });
@@ -2285,6 +2337,11 @@ const BOT_ROLE_ACCESS = {
     'Every OGVAULT slash command',
     'Staff chat, tickets, filters, and clip-review awards',
   ],
+  Management: [
+    'Same access as Owner for OGVAULT commands, tickets, staff channels, and awards',
+    'Full Discord Administrator permissions on this server',
+    'For trusted alts / managers',
+  ],
   Helper: [
     'See and reply in support tickets, and close them',
     'Talk in #staff-chat',
@@ -2453,12 +2510,11 @@ async function handleCommand(interaction) {
     await replyOwnBalance(interaction).catch(() => {});
     return;
   }
-  const allowed = adminIds();
-  if (!allowed.length) {
+  if (!adminIds().length && !hasOwnerLevelRole(interaction.member)) {
     await interaction.reply({ content: 'Admin is not configured', ephemeral: true });
     return;
   }
-  if (!allowed.includes(interaction.user.id)) {
+  if (!(await isOwnerLevel(interaction))) {
     await interaction.reply({ content: 'You cannot use this command', ephemeral: true });
     return;
   }
@@ -2761,6 +2817,7 @@ async function ensureJoinsChannel(guild) {
   ) || channels.find((channel) => channel.type === ChannelType.GuildText && channel.name === 'joins');
   const roles = await guild.roles.fetch();
   const owner = roles.find((role) => role.name === 'Owner');
+  const management = await ensureManagementRole(guild);
   const member = roles.find((role) => role.name === 'Member');
   const helper = roles.find((role) => role.name === 'Helper');
   const reviewer = roles.find((role) => role.name === REVIEWER_ROLE_NAME);
@@ -2781,10 +2838,10 @@ async function ensureJoinsChannel(guild) {
       id: role.id,
       deny: [PermissionFlagsBits.ViewChannel],
     })),
-    ...(owner ? [{ id: owner.id, allow: view }] : []),
+    ...[owner, management].filter(Boolean).map((role) => ({ id: role.id, allow: view })),
     ...adminIds().map((userId) => ({ id: userId, allow: view, type: 1 })),
   ];
-  const topic = 'Private join log. Owner only.';
+  const topic = 'Private join log. Owner and Management only.';
   let channel = existing;
   if (channel) {
     await channel.permissionOverwrites.set(overwrites).catch(() => {});
@@ -2838,6 +2895,7 @@ async function ensureListingsChannel(guild) {
   ) || channels.find((channel) => channel.type === ChannelType.GuildText && channel.name === 'listings');
   const roles = await guild.roles.fetch();
   const owner = roles.find((role) => role.name === 'Owner');
+  const management = await ensureManagementRole(guild);
   const member = roles.find((role) => role.name === 'Member');
   const helper = roles.find((role) => role.name === 'Helper');
   const reviewer = roles.find((role) => role.name === REVIEWER_ROLE_NAME);
@@ -2852,6 +2910,15 @@ async function ensureListingsChannel(guild) {
     PermissionFlagsBits.SendMessagesInThreads,
     PermissionFlagsBits.AttachFiles,
     PermissionFlagsBits.EmbedLinks,
+  ];
+  const ownerTalk = [
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.ReadMessageHistory,
+    PermissionFlagsBits.EmbedLinks,
+    PermissionFlagsBits.AttachFiles,
+    PermissionFlagsBits.ManageMessages,
+    PermissionFlagsBits.AddReactions,
   ];
   const overwrites = [
     {
@@ -2881,20 +2948,10 @@ async function ensureListingsChannel(guild) {
       id: role.id,
       deny: noInteract,
     })),
-    ...(owner
-      ? [{
-          id: owner.id,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.EmbedLinks,
-            PermissionFlagsBits.AttachFiles,
-            PermissionFlagsBits.ManageMessages,
-            PermissionFlagsBits.AddReactions,
-          ],
-        }]
-      : []),
+    ...[owner, management].filter(Boolean).map((role) => ({
+      id: role.id,
+      allow: ownerTalk,
+    })),
   ];
   if (existing) {
     await existing.permissionOverwrites.set(overwrites).catch(() => {});
@@ -3136,12 +3193,13 @@ function commandGuideEmbeds() {
     new EmbedBuilder()
       .setTitle('Command list')
       .setColor(0xf1c40f)
-      .setDescription('Slash commands are limited to **Owner**.')
-      .addFields({ name: 'Owner', value: first }),
+      .setDescription('Slash commands are limited to **Owner** and **Management**.')
+      .addFields({ name: 'Owner / Management', value: first }),
     new EmbedBuilder()
       .setColor(0xf1c40f)
       .setDescription(rest.join('\n\n') || '—')
       .addFields(
+        { name: 'Management', value: 'Same OGVAULT command and staff access as Owner. For trusted alts.' },
         { name: 'Reviewer', value: 'Can press the award buttons on a clip-review message and talk in #staff-chat. No slash commands.' },
         { name: 'Helper', value: 'Can see support tickets, reply in them, close them, and talk in #staff-chat. No slash commands.' },
         { name: 'Content Creator', value: 'Display role only. No commands.' },
@@ -3286,8 +3344,8 @@ async function onAutoModAction(execution) {
 
 function isStaffMember(member) {
   if (!member) return false;
-  if (adminIds().includes(member.id)) return true;
-  return member.roles.cache.some((role) => [REVIEWER_ROLE_NAME, 'Helper', 'Owner'].includes(role.name));
+  if (adminIds().includes(member.id) || hasOwnerLevelRole(member)) return true;
+  return member.roles.cache.some((role) => [REVIEWER_ROLE_NAME, 'Helper', ...OWNER_LEVEL_ROLES].includes(role.name));
 }
 
 async function handleReport(interaction) {
@@ -3355,7 +3413,7 @@ async function handleModButton(interaction) {
 
 async function ensureAutoMod(guild, alertChannel) {
   const roles = await guild.roles.fetch();
-  const exemptRoles = [REVIEWER_ROLE_NAME, 'Helper', 'Owner']
+  const exemptRoles = [REVIEWER_ROLE_NAME, 'Helper', ...OWNER_LEVEL_ROLES]
     .map((name) => roles.find((role) => role.name === name)?.id)
     .filter(Boolean);
   const exemptChannels = (await guild.channels.fetch())
@@ -3479,7 +3537,7 @@ async function ensureStaffText(guild, channelName, topic) {
   const channels = await guild.channels.fetch();
   const staff = channels.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === 'Staff');
   const roles = await guild.roles.fetch();
-  const staffRoles = [REVIEWER_ROLE_NAME, 'Helper', 'Owner']
+  const staffRoles = [REVIEWER_ROLE_NAME, 'Helper', ...OWNER_LEVEL_ROLES]
     .map((name) => roles.find((role) => role.name === name))
     .filter(Boolean);
   const talk = [
@@ -3594,6 +3652,7 @@ export function startDiscordAdmin(withPresence = true, withMembers = true) {
       await rest.put(Routes.applicationGuildCommands(client.user.id, guildId), { body: commands });
       console.log('Discord admin slash commands registered');
       await ensureReviewerRole(guild);
+      await syncManagementAssignments(guild).catch(() => console.error('Could not set up Management role'));
       await ensureGoldVipRole(guild);
       await sweepGoldVip();
       setInterval(() => { sweepGoldVip().catch(() => {}); }, 15 * 60 * 1000);
