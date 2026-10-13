@@ -14,7 +14,10 @@ export function withZone(path) {
 }
 
 export function formatDate(ts, options = {}) {
-  return new Date(ts).toLocaleDateString(undefined, {
+  return new Date(ts).toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
     ...options,
     timeZone: viewerTimeZone(),
   });
