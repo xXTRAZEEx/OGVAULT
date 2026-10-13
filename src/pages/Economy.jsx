@@ -767,12 +767,12 @@ export function Rewards() {
   );
 }
 
-function presenceLabel(value) {
+function presenceLabel(value, presenceEnabled) {
+  if (presenceEnabled === false) return 'Presence offline';
   if (value === 'online') return 'Online';
   if (value === 'idle') return 'Idle';
   if (value === 'dnd') return 'Do Not Disturb';
-  if (value === 'offline') return 'Offline / invisible';
-  return 'Unknown';
+  return 'Offline / invisible';
 }
 
 export function Earn() {
@@ -856,18 +856,24 @@ export function Earn() {
                   {status?.live ? 'Detected' : 'Not detected'}
                 </span>
                 <span className={`earn-presence ${status?.presenceStatus || 'offline'}`}>
-                  {presenceLabel(status?.presenceStatus)}
+                  {presenceLabel(status?.presenceStatus, status?.presenceEnabled)}
                 </span>
               </div>
               <p className="earn-custom">
                 {status?.customStatus
                   ? <>Status · <b>{status.customStatus}</b></>
-                  : 'No custom status set'}
+                  : status?.live
+                    ? <>Status · <b>ogvault.co.uk</b></>
+                    : 'No custom status set'}
               </p>
               <p className="muted">
-                {status?.live
-                  ? 'ogvault.co.uk is in your custom status. Keep Discord Online, Idle, or DND.'
-                  : 'Add ogvault.co.uk to your custom status. Invisible does not count.'}
+                {status?.presenceEnabled === false
+                  ? 'Discord presence is not connected yet. Status detection is temporarily offline.'
+                  : status?.live
+                    ? 'ogvault.co.uk is in your custom status. Keep Discord Online, Idle, or DND.'
+                    : status?.customStatus
+                      ? 'Custom status is set, but it must include ogvault.co.uk. Invisible does not count.'
+                      : 'Add ogvault.co.uk to your custom status. Invisible does not count.'}
               </p>
             </>
           ) : (

@@ -21,7 +21,7 @@ import {
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
 } from 'discord.js';
-import { disputeReviewChannelId } from './discord.js';
+import { discordAvatarUrl, discordName, disputeReviewChannelId } from './discord.js';
 import crypto from 'crypto';
 import {
   CRYPTO_NETWORKS,
@@ -36,10 +36,14 @@ import {
   grantsAvailable,
   inventoryItems,
   removeInventoryItem,
+  resetLeaderboard,
+  resolveShopItemIds,
+  setShopSale,
   settleAgreed,
 } from './logic.js';
 import { blackjackBiasPercent, setBlackjackBias } from './blackjack.js';
-import { fail, isVip, load, rid, round, update } from './store.js';
+import { LISTING_MS, listingPrize } from '../shared/listings.js';
+import { SHOP, fail, isVip, load, rid, round, update } from './store.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -180,6 +184,23 @@ const commands = [
       option.setName('hours').setDescription('How long to keep matchmaking off').setRequired(false).setMinValue(0.01)
     )),
   adminOnly(new SlashCommandBuilder()
+    .setName('resetleaderboard')
+    .setDescription('Fully clear the site Kill Race profit leaderboard for every period')),
+  adminOnly(new SlashCommandBuilder()
+    .setName('discount')
+    .setDescription('Discount the whole shop or specific items by a percent (0 clears)')
+    .addIntegerOption((option) =>
+      option.setName('percent').setDescription('Percent off (0 clears the sale)').setRequired(true).setMinValue(0).setMaxValue(90)
+    )
+    .addStringOption((option) =>
+      option
+        .setName('item')
+        .setDescription('One item, or comma-separated ids/names. Leave blank for the whole shop.')
+        .setRequired(false)
+        .setMaxLength(200)
+        .setAutocomplete(true)
+    )),
+  adminOnly(new SlashCommandBuilder()
     .setName('website')
     .setDescription('Take the whole site offline or bring it back')
     .addStringOption((option) =>
@@ -218,6 +239,10 @@ const commands = [
   new SlashCommandBuilder()
     .setName('earn')
     .setDescription('How to earn free tokens with your Discord status'),
+  new SlashCommandBuilder()
+    .setName('role')
+    .setDescription('Show what permissions a Discord role has with OGVAULT')
+    .addRoleOption((option) => option.setName('role').setDescription('Pick the role, for example Helper or Reviewer').setRequired(true)),
   adminOnly(new SlashCommandBuilder()
     .setName('announcements')
     .setDescription('Post a scrolling announcement on the site')
@@ -1546,6 +1571,7 @@ async function handleAward(interaction) {
     await interaction.reply({ content: 'That award is not valid', ephemeral: true });
     return;
   }
+  const reviewerName = interaction.member?.displayName || interaction.user.globalName || interaction.user.username;
   let settled = false;
   let awarded = null;
   try {
@@ -1554,31 +1580,52 @@ async function handleAward(interaction) {
       if (!match) return null;
       const nameOf = (id) => state.users.find((item) => item.id === id)?.username || 'player';
       if (match.status === 'done') {
-        return match.winnerId ? { winner: nameOf(match.winnerId), by: match.awardedBy?.name || '' } : null;
+        return match.winnerId
+          ? {
+            winner: nameOf(match.winnerId),
+            by: match.awardedBy?.name || reviewerName,
+            byId: match.awardedBy?.discordId || userId,
+            already: true,
+          }
+          : null;
       }
       const winnerId = side === 'host' ? match.hostId : match.guestId;
       settleAgreed(state, match, winnerId);
-      match.awardedBy = { discordId: userId, name: interaction.user.username, at: Date.now() };
+      match.awardedBy = { discordId: userId, name: reviewerName, at: Date.now() };
       if (match.review) {
         match.review.host = '';
         match.review.guest = '';
       }
       settled = true;
-      return { winner: nameOf(winnerId), by: interaction.user.username };
+      return { winner: nameOf(winnerId), by: reviewerName, byId: userId, already: false };
     });
   } catch (error) {
     if (interaction.replied || interaction.deferred) return;
     await interaction.reply({ content: error.status ? error.message : 'That award failed', ephemeral: true });
     return;
   }
-  const embeds = (interaction.message.embeds || []).map((embed) => embed.toJSON());
+  const embeds = (interaction.message.embeds || []).map((embed) => EmbedBuilder.from(embed).toJSON());
   if (awarded && embeds[0]) {
-    const fields = (embeds[0].fields || []).filter((field) => field.name !== '🏆 Awarded');
-    const by = awarded.by ? ` by ${awarded.by}` : '';
-    fields.push({ name: '🏆 Awarded', value: `**${awarded.winner}** won${by} · <t:${Math.floor(Date.now() / 1000)}:R>`.slice(0, 1024), inline: false });
+    const fields = (embeds[0].fields || []).filter((field) => field.name !== '🏆 Awarded' && field.name !== 'Result');
+    const reviewer = awarded.byId ? `<@${awarded.byId}>` : `**${awarded.by}**`;
+    fields.push({
+      name: 'Result',
+      value: [
+        `**Winner** ${awarded.winner}`,
+        `**Reviewed by** ${reviewer}`,
+        `<t:${Math.floor(Date.now() / 1000)}:R>`,
+      ].join('\n').slice(0, 1024),
+      inline: false,
+    });
     embeds[0] = { ...embeds[0], fields, color: 0x2ecc71 };
   }
   await interaction.update({ embeds, components: freezeAwardButtons(interaction.message.components) });
+  if (settled && awarded) {
+    await interaction.followUp({
+      content: `**${awarded.by}** awarded **${awarded.winner}** as the winner.`,
+      allowedMentions: { parse: [] },
+    }).catch(() => {});
+  }
   if (settled) afterReviewSettled(matchId);
 }
 
@@ -2126,11 +2173,18 @@ async function replyOwnBalance(interaction) {
 
 export function earnStatus(user) {
   const discordId = user?.discordId || '';
-  const presence = discordId ? statusGuild()?.presences.cache.get(discordId) : null;
-  const live = showsStatus(presence);
+  const presence = presenceEnabled && discordId ? statusGuild()?.presences.cache.get(discordId) : null;
+  const text = customStatus(presence);
+  const live = presenceEnabled && showsStatus(presence);
   const day = statusDay();
   const paid = !!user && user.statusPaidDay === day;
   const minutes = user?.statusDay === day ? Math.floor((user.statusMs || 0) / 60000) : 0;
+  let presenceStatus = null;
+  if (discordId) {
+    if (!presenceEnabled) presenceStatus = 'offline';
+    else if (!presence || presence.status === 'offline') presenceStatus = 'offline';
+    else presenceStatus = presence.status;
+  }
   return {
     rate: STATUS_RATE,
     points: STATUS_POINTS,
@@ -2138,6 +2192,15 @@ export function earnStatus(user) {
     presenceEnabled,
     linked: !!discordId,
     username: user?.username || null,
+    discordUsername: user?.discordUsername || null,
+    discordName: user ? discordName(user) : null,
+    discordAvatarUrl: user ? discordAvatarUrl(user) : null,
+    avatar: user?.avatar || 'default',
+    vip: user ? isVip(user) : false,
+    nameColor: user?.nameColor || 'default',
+    chatIcon: user?.chatIcon || 'none',
+    customStatus: text || (live ? 'ogvault.co.uk' : ''),
+    presenceStatus,
     live,
     paid,
     minutes: Math.min(Math.max(0, minutes), 60),
@@ -2170,6 +2233,87 @@ async function replyEarn(interaction) {
       { name: 'Your status', value: status.live ? 'Detected ✅' : 'Not detected', inline: true },
       { name: 'Today', value: status.paid ? 'Paid ✅' : `${status.minutes} / 60 minutes`, inline: true },
     );
+  await interaction.reply({ embeds: [embed] });
+}
+
+const BOT_ROLE_ACCESS = {
+  Owner: [
+    'Full Discord Administrator permissions on this server',
+    'Every OGVAULT slash command',
+    'Staff chat, tickets, filters, and clip-review awards',
+  ],
+  Helper: [
+    'See and reply in support tickets, and close them',
+    'Talk in #staff-chat',
+    'Handle /report Warn and Dismiss buttons in #filters',
+    'No OGVAULT slash commands',
+  ],
+  Reviewer: [
+    'Press award buttons on clip-review messages',
+    'Talk in #staff-chat',
+    'Read message history on review channels',
+    'No OGVAULT slash commands',
+  ],
+  Member: [
+    'Talk in member channels after verifying / linking Discord',
+    'Register for matching project and region tournaments',
+    'Use /earn, /balance, and /report',
+    'No admin slash commands',
+  ],
+  'Content Creator': [
+    'Display role only',
+    'No OGVAULT slash commands',
+  ],
+  'GOLD VIP': [
+    'Site VIP cosmetics and perks while VIP is active',
+    'No extra Discord slash commands',
+  ],
+  Tournament: [
+    'Temporary role while a Discord tournament is live',
+    'Receives /code DMs from the host',
+    'Cleared when the tournament ends',
+  ],
+  NA: ['Region tag for matchmaking and tournament signup gates', 'No slash commands'],
+  EU: ['Region tag for matchmaking and tournament signup gates', 'No slash commands'],
+  Eon: ['Project tag — required to register for Eon tournaments', 'No slash commands'],
+  EON: ['Project tag — required to register for Eon tournaments', 'No slash commands'],
+  Retrac: ['Project tag — required to register for Retrac tournaments', 'No slash commands'],
+};
+
+function formatDiscordPerms(role) {
+  if (role.permissions.has(PermissionFlagsBits.Administrator)) return 'Administrator (all Discord permissions)';
+  const names = role.permissions.toArray().map((flag) => flag.replace(/([a-z])([A-Z])/g, '$1 $2'));
+  if (!names.length) return 'No special Discord permissions (channel access is set per channel)';
+  return names.slice(0, 25).join(', ') + (names.length > 25 ? `, +${names.length - 25} more` : '');
+}
+
+async function replyRolePermissions(interaction) {
+  const role = interaction.options.getRole('role');
+  if (!role) {
+    await interaction.reply({ content: 'Pick a role.', ephemeral: true });
+    return;
+  }
+  const botAccess = BOT_ROLE_ACCESS[role.name]
+    || (role.managed ? ['Managed Discord role (bot or integration). Not an OGVAULT staff role.'] : ['No special OGVAULT bot access. Channel view still follows Discord overwrites.']);
+  const embed = new EmbedBuilder()
+    .setColor(role.color || 0xf5c451)
+    .setTitle(`Role · ${role.name}`)
+    .setDescription(`What **${role.name}** can do with OGVAULT and Discord.`)
+    .addFields(
+      { name: 'OGVAULT bot', value: botAccess.map((line) => `• ${line}`).join('\n').slice(0, 1024) },
+      { name: 'Discord permissions', value: formatDiscordPerms(role).slice(0, 1024) },
+      {
+        name: 'Role',
+        value: [
+          `Members with it: **${role.members?.size ?? '—'}**`,
+          `Mentionable: ${role.mentionable ? 'Yes' : 'No'}`,
+          `Hoisted: ${role.hoist ? 'Yes' : 'No'}`,
+          `ID: \`${role.id}\``,
+        ].join('\n'),
+        inline: false,
+      },
+    )
+    .setFooter({ text: 'ogvault.co.uk' });
   await interaction.reply({ embeds: [embed] });
 }
 
@@ -2256,6 +2400,10 @@ async function handleCommand(interaction) {
   }
   if (interaction.commandName === 'earn') {
     await replyEarn(interaction).catch(() => {});
+    return;
+  }
+  if (interaction.commandName === 'role') {
+    await replyRolePermissions(interaction).catch(() => {});
     return;
   }
   if (interaction.commandName === 'balance' && !interaction.options.getString('username')) {
@@ -2353,6 +2501,41 @@ async function handleCommand(interaction) {
       await interaction.deferReply({ ephemeral: true });
       const removed = await purgeChannel(interaction.channel);
       await interaction.editReply({ content: `Deleted ${removed} message${removed === 1 ? '' : 's'} in this channel.` });
+      return;
+    }
+    if (interaction.commandName === 'resetleaderboard') {
+      const at = update((state) => resetLeaderboard(state));
+      await interaction.reply({
+        content: `Leaderboard cleared. All-time, today, week, and month Kill Race profit ranks start fresh from <t:${Math.floor(at / 1000)}:f>. Match history is unchanged.`,
+        ephemeral: true,
+      });
+      return;
+    }
+    if (interaction.commandName === 'discount') {
+      const percent = interaction.options.getInteger('percent');
+      const rawItem = interaction.options.getString('item');
+      const result = update((state) => {
+        const items = resolveShopItemIds(rawItem);
+        return setShopSale(state, percent, items);
+      });
+      if (!(result.percent > 0)) {
+        await interaction.reply({ content: 'Shop sale cleared. Everything is back to full price.', ephemeral: true });
+        return;
+      }
+      if (!result.items) {
+        await interaction.reply({
+          content: `Whole shop is **${result.percent}% off**. Players see the sale price on the site.`,
+          ephemeral: true,
+        });
+        return;
+      }
+      const names = result.items
+        .map((id) => SHOP.find((item) => item.id === id)?.name || id)
+        .join(', ');
+      await interaction.reply({
+        content: `**${result.percent}% off** on ${names}.`,
+        ephemeral: true,
+      });
       return;
     }
     if (interaction.commandName === 'blackjack' && interaction.options.getSubcommand() === 'bias') {
@@ -2510,6 +2693,190 @@ function destinationText(method, destination) {
   return `${dest.accountName || '—'}\n${dest.accountNumber || '—'} · ${dest.sortCode || '—'}`;
 }
 
+async function ensureListingsChannel(guild) {
+  const channels = await guild.channels.fetch();
+  const community = channels.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === 'Community');
+  const existing = channels.find(
+    (channel) => channel.type === ChannelType.GuildText && channel.name === 'listings' && (!community || channel.parentId === community.id),
+  ) || channels.find((channel) => channel.type === ChannelType.GuildText && channel.name === 'listings');
+  const roles = await guild.roles.fetch();
+  const owner = roles.find((role) => role.name === 'Owner');
+  const member = roles.find((role) => role.name === 'Member');
+  const helper = roles.find((role) => role.name === 'Helper');
+  const reviewer = roles.find((role) => role.name === REVIEWER_ROLE_NAME);
+  const creator = roles.find((role) => role.name === 'Content Creator');
+  const noInteract = [
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.AddReactions,
+    PermissionFlagsBits.UseExternalEmojis,
+    PermissionFlagsBits.UseExternalStickers,
+    PermissionFlagsBits.CreatePublicThreads,
+    PermissionFlagsBits.CreatePrivateThreads,
+    PermissionFlagsBits.SendMessagesInThreads,
+    PermissionFlagsBits.AttachFiles,
+    PermissionFlagsBits.EmbedLinks,
+  ];
+  const overwrites = [
+    {
+      id: guild.roles.everyone.id,
+      deny: [PermissionFlagsBits.ViewChannel, ...noInteract],
+    },
+    {
+      id: guild.members.me.id,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.EmbedLinks,
+        PermissionFlagsBits.AttachFiles,
+        PermissionFlagsBits.AddReactions,
+        PermissionFlagsBits.ManageMessages,
+      ],
+    },
+    ...(member
+      ? [{
+          id: member.id,
+          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+          deny: noInteract,
+        }]
+      : []),
+    ...[helper, reviewer, creator].filter(Boolean).map((role) => ({
+      id: role.id,
+      deny: noInteract,
+    })),
+    ...(owner
+      ? [{
+          id: owner.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.EmbedLinks,
+            PermissionFlagsBits.AttachFiles,
+            PermissionFlagsBits.ManageMessages,
+            PermissionFlagsBits.AddReactions,
+          ],
+        }]
+      : []),
+  ];
+  if (existing) {
+    await existing.permissionOverwrites.set(overwrites).catch(() => {});
+    if (community && existing.parentId !== community.id) {
+      await existing.setParent(community.id, { lockPermissions: false }).catch(() => {});
+    }
+    if (existing.topic !== 'Live Kill Race listings from the site. Read only.') {
+      await existing.setTopic('Live Kill Race listings from the site. Read only.').catch(() => {});
+    }
+    return existing;
+  }
+  return guild.channels.create({
+    name: 'listings',
+    type: ChannelType.GuildText,
+    parent: community?.id,
+    topic: 'Live Kill Race listings from the site. Read only.',
+    permissionOverwrites: overwrites,
+  });
+}
+
+const LISTING_SITE = 'https://ogvault.co.uk';
+const LISTING_DIVIDER = '━━━━━━━━━━━━━━━━━━━━';
+
+function listingAmount(amount, currency) {
+  if (currency === 'points') {
+    const n = Math.round(Number(amount) || 0);
+    return `${n} Vault Point${n === 1 ? '' : 's'}`;
+  }
+  const n = Math.round((Number(amount) || 0) * 100) / 100;
+  const text = Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/\.?0+$/, '');
+  return `${text} token${n === 1 ? '' : 's'}`;
+}
+
+function listingStakeText(match) {
+  return listingAmount(match?.entry, match?.currency === 'points' ? 'points' : 'tokens');
+}
+
+function listingPrizeText(match) {
+  const entry = Number(match?.entry) || 0;
+  if (match?.currency === 'points') return listingAmount(Math.round(entry * 2), 'points');
+  return listingAmount(listingPrize(entry), 'tokens');
+}
+
+function projectListingEmoji(project) {
+  const emoji = projectEmoji(project);
+  if (emoji) return emoji.toString();
+  return project === 'Retrac' ? '🔵' : '🟢';
+}
+
+function listingEmbed(match, host, { test = false } = {}) {
+  const project = match.project === 'Retrac' ? 'Retrac' : 'Eon';
+  const region = match.region === 'NA' ? 'NA' : 'EU';
+  const mode = match.mode || 'Kill Race';
+  const platform = match.platform || 'PC';
+  const points = match.currency === 'points';
+  const hostName = host?.username || 'Unknown';
+  const hostLine = host?.discordId
+    ? `<@${host.discordId}>`
+    : `**${host?.discordUsername || hostName}**`;
+  const expiresAt = match.expiresAt || (match.createdAt || Date.now()) + LISTING_MS;
+  const url = test ? LISTING_SITE : `${LISTING_SITE}/match/${match.id}`;
+  const stake = listingStakeText(match);
+  const prize = listingPrizeText(match);
+  const color = points ? 0xc0c8d4 : project === 'Retrac' ? 0x3b82f6 : 0xf5c451;
+  const projectMark = projectListingEmoji(project);
+  const embed = new EmbedBuilder()
+    .setAuthor({
+      name: 'OGVAULT  ·  Live Kill Race',
+      iconURL: `${LISTING_SITE}/logo.png`,
+      url: LISTING_SITE,
+    })
+    .setTitle(test ? 'Kill Race · seat open' : `${mode} · seat open`)
+    .setURL(url)
+    .setColor(color)
+    .setThumbnail(`${LISTING_SITE}/logo.png`)
+    .setDescription([
+      test ? '-# Test post — not a real match' : '-# Seat open · first to join takes it',
+      '',
+      `${projectMark}  **${project}**   ·   🌍 **${region}**   ·   🖥 **${platform}**`,
+      `👤  Hosted by ${hostLine}`,
+      '',
+      LISTING_DIVIDER,
+      `💰  **Entry** \`${stake}\``,
+      `🏆  **Winner takes** \`${prize}\``,
+      LISTING_DIVIDER,
+    ].join('\n'))
+    .addFields(
+      { name: '⏱  Expires', value: `<t:${Math.floor(expiresAt / 1000)}:R>`, inline: true },
+      { name: '🎯  Mode', value: mode, inline: true },
+      { name: '💎  Purse', value: points ? 'Vault Points' : 'Vault Tokens', inline: true },
+    )
+    .setFooter({
+      text: test ? 'OGVAULT listings  ·  preview' : 'ogvault.co.uk  ·  18+  ·  Play fair',
+      iconURL: `${LISTING_SITE}/logo.png`,
+    })
+    .setTimestamp(match.createdAt || Date.now());
+  return {
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('Join on OGVAULT').setURL(url),
+      ),
+    ],
+  };
+}
+
+export async function notifyListingCreated(match, host) {
+  if (!bot || botFailed || !match || match.practice || match.invitee) return;
+  const guildId = String(process.env.DISCORD_GUILD_ID || '').trim();
+  if (!/^\d{5,32}$/.test(guildId)) return;
+  try {
+    const guild = await bot.guilds.fetch(guildId);
+    const channel = await ensureListingsChannel(guild);
+    await channel.send(listingEmbed(match, host));
+  } catch (error) {
+    console.error('Could not post listing alert', error?.message || '');
+  }
+}
+
 export async function notifyWithdrawal({ username, method, amount, fee, payout, destination }) {
   if (!bot || botFailed) return;
   const key = WITHDRAW_CHANNELS[String(method || '').toLowerCase()];
@@ -2588,6 +2955,7 @@ const COMMAND_GUIDE = [
   ['/balance', 'Anyone can see their own tokens and Vault Points. Owners can add a username to look up a player.'],
   ['/report', 'Anyone can report a member with a reason. Helpers get pinged in #filters and can Warn or Dismiss. 3 warnings in a week means a 1 hour timeout.'],
   ['/earn', 'Anyone can see how to earn 0.02 tokens and 2 Vault Points a day by putting ogvault.co.uk in their Discord status, and their progress today.'],
+  ['/role', 'Anyone can pick a Discord role and see what it can do with OGVAULT, plus its Discord permissions.'],
   ['/announcements', 'Post a scrolling announcement on the site. It does not post in Discord.'],
   ['/live', 'Lock the whole site behind a launch page showing live Discord members against your goal (bots not counted). It opens by itself when the goal is hit.'],
   ['/match history', 'Every match a player has played: date, opponent, entry, project and region, who won, payout, forfeits, and who awarded disputes.'],
@@ -2598,6 +2966,8 @@ const COMMAND_GUIDE = [
   ['/giveall item', 'Grant an inventory item to every registered user.'],
   ['/inventory', 'Show a site user inventory and add or remove items.'],
   ['/matchmaking', 'Turn new Kill Race listings on or off, with an optional number of hours.'],
+  ['/resetleaderboard', 'Fully clear the site Kill Race profit leaderboard (all time, today, week, month). Match history is kept.'],
+  ['/discount', 'Discount the whole shop or named items by a percent. Use 0 to clear the sale.'],
   ['/purge', 'Delete every message in the Discord channel where you run it.'],
   ['/stats', 'Show live players, registered users, open lobbies, games, tokens, and withdrawals.'],
   ['/tokens add', 'Add tokens to one site account.'],
@@ -3084,6 +3454,7 @@ export function startDiscordAdmin(withPresence = true) {
       announceWeeklyResults().catch(() => console.error('Weekly Vault announcement failed'));
       setInterval(() => { announceWeeklyResults().catch(() => console.error('Weekly Vault announcement failed')); }, 5 * 60 * 1000);
       await ensureVoiceChannels(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up voice channels'));
+      await ensureListingsChannel(await client.guilds.fetch(guildId)).catch(() => console.error('Could not set up listings channel'));
       await ensureTournamentRole(await client.guilds.fetch(guildId)).catch(() => {});
       await ensureProjectRoles(await client.guilds.fetch(guildId)).catch(() => console.error('Could not create Eon/Retrac roles'));
       await ensureProjectEmojis(await client.guilds.fetch(guildId)).catch(() => console.error('Could not upload project emojis'));
@@ -3102,6 +3473,15 @@ export function startDiscordAdmin(withPresence = true) {
     }
   });
   client.on('interactionCreate', (interaction) => {
+    if (interaction.isAutocomplete() && interaction.commandName === 'discount') {
+      const focused = String(interaction.options.getFocused() || '').toLowerCase();
+      const choices = SHOP
+        .filter((item) => !focused || item.name.toLowerCase().includes(focused) || item.id.includes(focused))
+        .slice(0, 25)
+        .map((item) => ({ name: `${item.name} (${item.price})`, value: item.id }));
+      interaction.respond(choices).catch(() => {});
+      return;
+    }
     if (interaction.isStringSelectMenu() && interaction.customId === 'ogvault:ticket:pick') {
       const kind = interaction.values?.[0];
       if (!TICKET_KINDS[kind]) {
