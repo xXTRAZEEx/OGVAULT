@@ -173,7 +173,7 @@ const commands = [
     .addRoleOption((option) => option.setName('role').setDescription('Role to give').setRequired(true))),
   adminOnly(new SlashCommandBuilder()
     .setName('stats')
-    .setDescription('Show live site numbers')),
+    .setDescription('Show live site numbers, including how many people have preregistered')),
   adminOnly(new SlashCommandBuilder()
     .setName('ban')
     .setDescription('Ban a site account from login and matchmaking')
@@ -1535,12 +1535,14 @@ function siteStatsEmbed() {
   const banned = users.filter((user) => user.banUntil > Date.now()).length;
   const pending = (state.withdrawals || []).filter((row) => row.status === 'pending');
   const pendingPay = pending.reduce((sum, row) => sum + (row.payout == null ? row.amount || 0 : row.payout), 0);
+  const linked = users.filter((user) => String(user.discordId || '').trim()).length;
   return new EmbedBuilder()
     .setTitle('OGVAULT live')
     .setColor(0xf1c40f)
     .addFields(
       { name: 'Online now', value: String(onlineCount()), inline: true },
-      { name: 'Registered', value: String(users.length), inline: true },
+      { name: 'Preregistered', value: String(users.length), inline: true },
+      { name: 'Discord linked', value: String(linked), inline: true },
       { name: 'VIP', value: String(vip), inline: true },
       { name: 'Open lobbies', value: String(count(['open', 'staging'])), inline: true },
       { name: 'In a match', value: String(count(['playing', 'result'])), inline: true },
@@ -3386,7 +3388,7 @@ const COMMAND_GUIDE = [
   ['/resetleaderboard', 'Fully clear the site Kill Race profit leaderboard (all time, today, week, month). Match history is kept.'],
   ['/discount', 'Discount the whole shop or named items by a percent, with a sale reason. Use 0 to clear.'],
   ['/purge', 'Delete every message in the Discord channel where you run it.'],
-  ['/stats', 'Show live players, registered users, open lobbies, games, tokens, and withdrawals.'],
+  ['/stats', 'Show live players, preregistered accounts, Discord-linked users, open lobbies, games, tokens, and withdrawals.'],
   ['/tokens add', 'Add tokens to one site account.'],
   ['/tokens remove', 'Remove tokens from one site account.'],
   ['/tournament create', 'Post a signup embed in #tournaments. Set signup time, event duration, slots, entry, and prize. Register gives a Tournament role until the event ends.'],
