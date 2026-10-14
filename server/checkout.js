@@ -1,8 +1,14 @@
 import crypto from 'crypto';
 import Stripe from 'stripe';
-import { PURCHASE_TAX_PENCE, chargePence, creditPaidCheckout } from './logic.js';
-import { notifyPayment } from './discordAdmin.js';
-import { fail, update } from './store.js';
+import {
+  PURCHASE_TAX_PENCE,
+  chargePence,
+  creditPaidCheckout,
+  linkStripeCharge,
+  resolveStripeDispute,
+} from './logic.js';
+import { notifyChargeback, notifyPayment } from './discordAdmin.js';
+import { fail, load, update } from './store.js';
 
 const letters = 'abcdefghijklmnopqrstuvwxyz';
 let suffix = '';
@@ -71,6 +77,14 @@ export async function createCoinCheckout({ user, amount, origin }) {
         channel: 'card',
         username: user.username,
       },
+      payment_intent_data: {
+        metadata: {
+          userId: user.id,
+          tokens: String(amount),
+          username: user.username,
+          channel: 'card',
+        },
+      },
       line_items: [
         {
           quantity: 1,
@@ -94,6 +108,61 @@ export async function createCoinCheckout({ user, amount, origin }) {
   }
 }
 
+function handleCheckoutCompleted(session) {
+  const result = update((state) => creditPaidCheckout(state, session));
+  if (result.credited > 0) {
+    const pounds = (Number(session.amount_total) / 100).toFixed(2);
+    notifyPayment({
+      method: 'Card',
+      username: result.username || session.metadata?.username,
+      userId: result.userId,
+      discordId: result.discordId,
+      tokens: result.credited,
+      amount: `£${pounds}`,
+      balance: result.balance,
+      status: 'paid',
+      reference: String(session.id || ''),
+      paymentIntentId: result.paymentIntentId || '',
+    }).catch(() => {});
+  }
+  return { received: true };
+}
+
+function handleDispute(dispute, eventType) {
+  const paymentIntentId = typeof dispute.payment_intent === 'string'
+    ? dispute.payment_intent
+    : String(dispute.payment_intent?.id || '');
+  const chargeId = typeof dispute.charge === 'string'
+    ? dispute.charge
+    : String(dispute.charge?.id || '');
+
+  if (paymentIntentId && chargeId) {
+    update((state) => {
+      linkStripeCharge(state, { paymentIntentId, chargeId });
+    });
+  }
+
+  const matched = resolveStripeDispute(load(), dispute);
+  const amount = Number(dispute.amount);
+  const pounds = Number.isFinite(amount) ? `£${(amount / 100).toFixed(2)}` : '—';
+  const closed = eventType === 'charge.dispute.closed';
+  notifyChargeback({
+    status: closed ? String(dispute.status || 'closed') : 'opened',
+    reason: String(dispute.reason || 'unknown'),
+    amount: pounds,
+    username: matched.username || dispute.metadata?.username || 'Unknown',
+    userId: matched.userId || dispute.metadata?.userId || '',
+    discordId: matched.discordId || '',
+    tokens: matched.tokens || Number(dispute.metadata?.tokens || 0) || 0,
+    reference: matched.sessionId || paymentIntentId || chargeId || String(dispute.id || ''),
+    paymentIntentId,
+    chargeId,
+    disputeId: String(dispute.id || ''),
+    balance: matched.balance,
+  }).catch(() => {});
+  return { received: true };
+}
+
 export function handleStripeWebhook(rawBody, signature) {
   const stripe = requireCheckout();
   if (!signature) fail(400, 'Missing Stripe signature');
@@ -103,19 +172,11 @@ export function handleStripeWebhook(rawBody, signature) {
   } catch {
     fail(400, 'Invalid Stripe signature');
   }
-  if (event.type !== 'checkout.session.completed') return { received: true };
-  const session = event.data.object;
-  const result = update((state) => creditPaidCheckout(state, session));
-  if (result.credited > 0) {
-    const pounds = (Number(session.amount_total) / 100).toFixed(2);
-    notifyPayment({
-      method: 'Card',
-      username: result.username || session.metadata?.username,
-      tokens: result.credited,
-      amount: `£${pounds}`,
-      status: 'paid',
-      reference: String(session.id || ''),
-    }).catch(() => {});
+  if (event.type === 'checkout.session.completed') {
+    return handleCheckoutCompleted(event.data.object);
+  }
+  if (event.type === 'charge.dispute.created' || event.type === 'charge.dispute.closed') {
+    return handleDispute(event.data.object, event.type);
   }
   return { received: true };
 }

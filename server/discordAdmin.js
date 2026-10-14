@@ -3153,25 +3153,99 @@ export async function handleCopyWithdrawal(interaction) {
   await interaction.reply({ content: `\`${value}\``, ephemeral: true });
 }
 
-export async function notifyPayment({ method, username, tokens, amount, status, reference }) {
+function paymentsChannelId() {
+  return String(process.env.DISCORD_PAYMENTS_CHANNEL_ID || '').trim();
+}
+
+function discordField(discordId) {
+  const id = String(discordId || '').trim();
+  if (!/^\d{5,32}$/.test(id)) return 'Not linked';
+  return `<@${id}>\n\`${id}\``;
+}
+
+export async function notifyPayment({
+  method,
+  username,
+  userId,
+  discordId,
+  tokens,
+  amount,
+  balance,
+  status,
+  reference,
+  paymentIntentId,
+}) {
   if (!bot || botFailed) return;
-  const channelId = String(process.env.DISCORD_PAYMENTS_CHANNEL_ID || '').trim();
+  const channelId = paymentsChannelId();
   if (!/^\d{5,32}$/.test(channelId)) return;
   const paid = status === 'paid' || status === 'finished';
+  const fields = [
+    { name: 'Player', value: username || 'Unknown', inline: true },
+    { name: 'Site user id', value: userId ? `\`${userId}\`` : '—', inline: true },
+    { name: 'Discord', value: discordField(discordId), inline: true },
+    { name: 'Tokens', value: String(tokens ?? 0), inline: true },
+    { name: 'Amount', value: amount || '—', inline: true },
+    { name: 'Balance after', value: balance == null ? '—' : String(balance), inline: true },
+    { name: 'Reference', value: reference ? `\`${reference}\`` : '—' },
+  ];
+  if (paymentIntentId) {
+    fields.push({ name: 'Payment intent', value: `\`${paymentIntentId}\`` });
+  }
   const embed = new EmbedBuilder()
     .setTitle(paid ? `${method} payment received` : `${method} payment ${status || 'update'}`)
     .setColor(paid ? 0x3ddc84 : 0xe2b340)
-    .addFields(
-      { name: 'Player', value: username || 'Unknown', inline: true },
-      { name: 'Tokens', value: String(tokens ?? 0), inline: true },
-      { name: 'Amount', value: amount || '—', inline: true },
-      { name: 'Reference', value: reference || '—' },
-    );
+    .addFields(fields)
+    .setTimestamp();
   try {
     const channel = await bot.channels.fetch(channelId);
     await channel.send({ embeds: [embed] });
   } catch {
     console.error('Could not post a payment alert');
+  }
+}
+
+export async function notifyChargeback({
+  status,
+  reason,
+  amount,
+  username,
+  userId,
+  discordId,
+  tokens,
+  reference,
+  paymentIntentId,
+  chargeId,
+  disputeId,
+  balance,
+}) {
+  if (!bot || botFailed) return;
+  const channelId = paymentsChannelId();
+  if (!/^\d{5,32}$/.test(channelId)) return;
+  const opened = status === 'opened' || status === 'needs_response' || status === 'warning_needs_response';
+  const embed = new EmbedBuilder()
+    .setTitle(opened ? 'Card chargeback / dispute opened' : `Card dispute ${status || 'update'}`)
+    .setColor(opened ? 0xed4245 : 0xf5c451)
+    .setDescription('Alert only — no tokens were removed and the account was not banned.')
+    .addFields(
+      { name: 'Player', value: username || 'Unknown', inline: true },
+      { name: 'Site user id', value: userId ? `\`${userId}\`` : '—', inline: true },
+      { name: 'Discord', value: discordField(discordId), inline: true },
+      { name: 'Amount', value: amount || '—', inline: true },
+      { name: 'Tokens credited', value: String(tokens ?? 0), inline: true },
+      { name: 'Balance now', value: balance == null ? '—' : String(balance), inline: true },
+      { name: 'Reason', value: reason || 'unknown', inline: true },
+      { name: 'Status', value: status || '—', inline: true },
+      { name: 'Payment ref', value: reference ? `\`${reference}\`` : '—' },
+      { name: 'Dispute id', value: disputeId ? `\`${disputeId}\`` : '—' },
+    )
+    .setTimestamp();
+  if (paymentIntentId) embed.addFields({ name: 'Payment intent', value: `\`${paymentIntentId}\`` });
+  if (chargeId) embed.addFields({ name: 'Charge id', value: `\`${chargeId}\`` });
+  try {
+    const channel = await bot.channels.fetch(channelId);
+    await channel.send({ embeds: [embed] });
+  } catch {
+    console.error('Could not post a chargeback alert');
   }
 }
 

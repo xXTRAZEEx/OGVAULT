@@ -1323,6 +1323,23 @@ export function purchaseAmount(raw) {
   return amount;
 }
 
+function paymentIdentity(user) {
+  if (!user) return { username: '', userId: '', discordId: '', balance: 0 };
+  return {
+    username: user.username || '',
+    userId: user.id || '',
+    discordId: String(user.discordId || ''),
+    balance: round(user.balance || 0),
+  };
+}
+
+function stripePaymentIntentId(session) {
+  const raw = session?.payment_intent;
+  if (!raw) return '';
+  if (typeof raw === 'string') return raw;
+  return String(raw.id || '');
+}
+
 export function creditPaidCheckout(state, session) {
   if (!session || session.mode !== 'payment' || session.payment_status !== 'paid') return { skipped: true };
   const sessionId = String(session.id || '');
@@ -1341,11 +1358,24 @@ export function creditPaidCheckout(state, session) {
   if (already) return { duplicate: true, credited: 0 };
   const user = state.users.find((item) => item.id === userId && !item.npc);
   if (!user) fail(404, 'That player is no longer on the server');
+  const paymentIntentId = stripePaymentIntentId(session);
   user.deposited = round(totalDeposited(state, user) + tokens);
-  credit(state, user, tokens, 'deposit', { price: tokens, sessionId, provider: 'stripe', channel: 'card' });
+  credit(state, user, tokens, 'deposit', {
+    price: tokens,
+    sessionId,
+    paymentIntentId: paymentIntentId || undefined,
+    provider: 'stripe',
+    channel: 'card',
+  });
   state.paidCheckouts.push(sessionId);
   if (state.paidCheckouts.length > 500) state.paidCheckouts.splice(0, state.paidCheckouts.length - 500);
-  return { credited: tokens, duplicate: false, username: user.username };
+  return {
+    credited: tokens,
+    duplicate: false,
+    ...paymentIdentity(user),
+    paymentIntentId,
+    sessionId,
+  };
 }
 
 export function creditNowPayment(state, body) {
@@ -1359,19 +1389,99 @@ export function creditNowPayment(state, body) {
     fail(400, 'Paid amount does not match the token pack');
   }
   if (String(body.payment_status || '') !== 'finished') {
-    return { credited: 0, username: invoice.username || '', price: invoice.price, tokens: invoice.tokens };
+    const pendingUser = state.users.find((item) => item.id === invoice.userId && !item.npc);
+    return {
+      credited: 0,
+      ...paymentIdentity(pendingUser),
+      username: pendingUser?.username || invoice.username || '',
+      userId: invoice.userId || '',
+      price: invoice.price,
+      tokens: invoice.tokens,
+    };
   }
   if (!Array.isArray(state.paidCheckouts)) state.paidCheckouts = [];
   const key = `np_${paymentId}`;
   const already = state.paidCheckouts.includes(key) || state.txs.some((tx) => tx.meta && tx.meta.sessionId === key);
-  if (already) return { credited: 0, duplicate: true, username: invoice.username || '', price: invoice.price };
+  if (already) {
+    const paidUser = state.users.find((item) => item.id === invoice.userId && !item.npc);
+    return {
+      credited: 0,
+      duplicate: true,
+      ...paymentIdentity(paidUser),
+      username: paidUser?.username || invoice.username || '',
+      userId: invoice.userId || '',
+      price: invoice.price,
+    };
+  }
   const user = state.users.find((item) => item.id === invoice.userId && !item.npc);
   if (!user) fail(404, 'That player is no longer on the server');
   user.deposited = round(totalDeposited(state, user) + invoice.tokens);
-  credit(state, user, invoice.tokens, 'deposit', { price: invoice.tokens, sessionId: key, provider: 'nowpayments', channel: 'crypto' });
+  credit(state, user, invoice.tokens, 'deposit', {
+    price: invoice.tokens,
+    sessionId: key,
+    orderId,
+    provider: 'nowpayments',
+    channel: 'crypto',
+  });
   state.paidCheckouts.push(key);
   if (state.paidCheckouts.length > 500) state.paidCheckouts.splice(0, state.paidCheckouts.length - 500);
-  return { credited: invoice.tokens, duplicate: false, username: user.username, price: invoice.price };
+  return {
+    credited: invoice.tokens,
+    duplicate: false,
+    ...paymentIdentity(user),
+    price: invoice.price,
+  };
+}
+
+/** Match a Stripe dispute/chargeback back to the depositing site user. */
+export function resolveStripeDispute(state, dispute) {
+  const paymentIntentId = String(
+    typeof dispute?.payment_intent === 'string'
+      ? dispute.payment_intent
+      : dispute?.payment_intent?.id || '',
+  );
+  const chargeId = String(
+    typeof dispute?.charge === 'string' ? dispute.charge : dispute?.charge?.id || '',
+  );
+  const tx = (state.txs || []).find((row) => {
+    if (row.type !== 'deposit' || row.meta?.provider !== 'stripe') return false;
+    if (paymentIntentId && row.meta?.paymentIntentId === paymentIntentId) return true;
+    if (chargeId && row.meta?.chargeId === chargeId) return true;
+    return false;
+  });
+  const metaUserId = String(
+    dispute?.metadata?.userId
+      || (typeof dispute?.payment_intent === 'object' && dispute.payment_intent?.metadata?.userId)
+      || '',
+  );
+  const user = state.users.find((item) => !item.npc && (
+    (tx && item.id === tx.userId)
+    || (metaUserId && item.id === metaUserId)
+  ));
+  return {
+    found: !!(tx || user),
+    tx: tx || null,
+    ...paymentIdentity(user),
+    sessionId: tx?.meta?.sessionId || '',
+    paymentIntentId: paymentIntentId || tx?.meta?.paymentIntentId || '',
+    chargeId: chargeId || tx?.meta?.chargeId || '',
+    tokens: tx ? Math.abs(Number(tx.amount) || 0) : Number(dispute?.metadata?.tokens || 0) || 0,
+  };
+}
+
+/** Attach charge id onto a prior Stripe deposit when a dispute arrives. */
+export function linkStripeCharge(state, { paymentIntentId, chargeId }) {
+  const pi = String(paymentIntentId || '');
+  const charge = String(chargeId || '');
+  if (!pi || !charge) return false;
+  const tx = (state.txs || []).find((row) => (
+    row.type === 'deposit'
+    && row.meta?.provider === 'stripe'
+    && row.meta?.paymentIntentId === pi
+  ));
+  if (!tx) return false;
+  tx.meta = { ...(tx.meta || {}), chargeId: charge };
+  return true;
 }
 
 function withdrawalDestination(method, body) {

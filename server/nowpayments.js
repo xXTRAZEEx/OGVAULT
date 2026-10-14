@@ -77,8 +77,11 @@ export async function handleNowIpn(body, signature) {
     notifyPayment({
       method: 'Crypto',
       username: result.username,
+      userId: result.userId,
+      discordId: result.discordId,
       tokens: result.credited || result.tokens,
       amount: `£${Number(result.price || 0).toFixed(2)}`,
+      balance: result.balance,
       status,
       reference: String(body.payment_id || ''),
     }).catch(() => {});
