@@ -3157,10 +3157,87 @@ function paymentsChannelId() {
   return String(process.env.DISCORD_PAYMENTS_CHANNEL_ID || '').trim();
 }
 
+function chargebacksChannelEnvId() {
+  return String(process.env.DISCORD_CHARGEBACKS_CHANNEL_ID || '').trim();
+}
+
+let chargebacksChannelId = '';
+
 function discordField(discordId) {
   const id = String(discordId || '').trim();
   if (!/^\d{5,32}$/.test(id)) return 'Not linked';
   return `<@${id}>\n\`${id}\``;
+}
+
+async function ensureChargebacksChannel(guild) {
+  const channels = await guild.channels.fetch();
+  let finance = channels.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === 'Finance');
+  if (!finance) {
+    finance = await guild.channels.create({
+      name: 'Finance',
+      type: ChannelType.GuildCategory,
+      permissionOverwrites: [
+        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      ],
+    });
+  }
+  const existing = channels.find(
+    (channel) => channel.type === ChannelType.GuildText && channel.name === 'chargebacks' && channel.parentId === finance.id,
+  ) || channels.find((channel) => channel.type === ChannelType.GuildText && channel.name === 'chargebacks');
+  const roles = await guild.roles.fetch();
+  const owner = roles.find((role) => role.name === 'Owner');
+  const management = await ensureManagementRole(guild);
+  const talk = [
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.ReadMessageHistory,
+    PermissionFlagsBits.EmbedLinks,
+    PermissionFlagsBits.AttachFiles,
+    PermissionFlagsBits.AddReactions,
+  ];
+  const overwrites = [
+    { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+    { id: guild.members.me.id, allow: [...talk, PermissionFlagsBits.ManageMessages] },
+    ...[owner, management].filter(Boolean).map((role) => ({ id: role.id, allow: talk })),
+    ...adminIds().map((userId) => ({ id: userId, type: 1, allow: talk })),
+  ];
+  const topic = 'Stripe chargebacks and card disputes. Owner and Management only.';
+  let channel = existing;
+  if (channel) {
+    await channel.permissionOverwrites.set(overwrites).catch(() => {});
+    if (channel.parentId !== finance.id) {
+      await channel.setParent(finance.id, { lockPermissions: false }).catch(() => {});
+    }
+    if (channel.topic !== topic) await channel.setTopic(topic).catch(() => {});
+  } else {
+    channel = await guild.channels.create({
+      name: 'chargebacks',
+      type: ChannelType.GuildText,
+      parent: finance.id,
+      topic,
+      permissionOverwrites: overwrites,
+    });
+  }
+  chargebacksChannelId = channel.id;
+  return channel;
+}
+
+async function resolveChargebacksChannel() {
+  const envId = chargebacksChannelEnvId();
+  if (/^\d{5,32}$/.test(envId)) {
+    const channel = await bot.channels.fetch(envId).catch(() => null);
+    if (channel?.isTextBased?.()) return channel;
+  }
+  if (chargebacksChannelId) {
+    const cached = await bot.channels.fetch(chargebacksChannelId).catch(() => null);
+    if (cached?.isTextBased?.()) return cached;
+    chargebacksChannelId = '';
+  }
+  const id = String(process.env.DISCORD_GUILD_ID || '').trim();
+  if (!/^\d{5,32}$/.test(id) || !bot?.isReady?.()) return null;
+  const guild = await bot.guilds.fetch(id).catch(() => null);
+  if (!guild) return null;
+  return ensureChargebacksChannel(guild);
 }
 
 export async function notifyPayment({
@@ -3219,8 +3296,6 @@ export async function notifyChargeback({
   balance,
 }) {
   if (!bot || botFailed) return;
-  const channelId = paymentsChannelId();
-  if (!/^\d{5,32}$/.test(channelId)) return;
   const opened = status === 'opened' || status === 'needs_response' || status === 'warning_needs_response';
   const embed = new EmbedBuilder()
     .setTitle(opened ? 'Card chargeback / dispute opened' : `Card dispute ${status || 'update'}`)
@@ -3242,10 +3317,14 @@ export async function notifyChargeback({
   if (paymentIntentId) embed.addFields({ name: 'Payment intent', value: `\`${paymentIntentId}\`` });
   if (chargeId) embed.addFields({ name: 'Charge id', value: `\`${chargeId}\`` });
   try {
-    const channel = await bot.channels.fetch(channelId);
+    const channel = await resolveChargebacksChannel();
+    if (!channel?.isTextBased?.()) {
+      console.error('Chargeback alert skipped: #chargebacks channel missing');
+      return;
+    }
     await channel.send({ embeds: [embed] });
-  } catch {
-    console.error('Could not post a chargeback alert');
+  } catch (error) {
+    console.error('Could not post a chargeback alert', error?.message || '');
   }
 }
 
@@ -3785,6 +3864,7 @@ export function startDiscordAdmin(withPresence = true, withMembers = true) {
       setInterval(() => { announceWeeklyResults().catch(() => console.error('Weekly Vault announcement failed')); }, 5 * 60 * 1000);
       await ensureVoiceChannels(guild).catch(() => console.error('Could not set up voice channels'));
       await ensureJoinsChannel(guild).catch(() => console.error('Could not set up joins channel'));
+      await ensureChargebacksChannel(guild).catch(() => console.error('Could not set up chargebacks channel'));
       await ensureListingsChannel(guild).catch(() => console.error('Could not set up listings channel'));
       await ensureTournamentRole(guild).catch(() => {});
       await ensureProjectRoles(guild).catch(() => console.error('Could not create Eon/Retrac roles'));

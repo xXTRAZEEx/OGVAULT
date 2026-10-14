@@ -175,6 +175,7 @@ async function main() {
   const start = await ensureCategory(channels, 'Start here');
   const community = await ensureCategory(channels, 'Community');
   const news = await ensureCategory(channels, 'News');
+  const financeCategory = finance || await ensureCategory(channels, 'Finance');
 
   const gateView = [
     overwrite(everyone.id, VIEW | HISTORY, SEND),
@@ -237,6 +238,13 @@ async function main() {
     'Open a private ticket. Only you and the owner can see it.',
     gateView,
   );
+  await ensureText(
+    channels,
+    financeCategory,
+    'chargebacks',
+    'Stripe chargebacks and card disputes. Owner and Management only.',
+    ownerOnly,
+  );
 
   const hidden = [overwrite(everyone.id, 0n, VIEW), overwrite(member.id, 0n, VIEW)];
   for (const channel of channels) {
@@ -254,7 +262,7 @@ async function main() {
     ['Community', ['general', 'clips', 'support', 'listings']],
     ['News', ['announcements', 'tournaments']],
     ['Staff', null],
-    ['Finance', null],
+    ['Finance', ['chargebacks']],
   ];
   const moves = [];
   order.forEach(([categoryName, children], index) => {
