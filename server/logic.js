@@ -1566,6 +1566,35 @@ export function requestWithdrawal(state, user, body) {
   return row;
 }
 
+/** Mark a pending withdrawal completed or denied. Denied refunds the full withdrawn amount. */
+export function resolveWithdrawal(state, withdrawalId, { status, note = '', by = '' } = {}) {
+  const id = String(withdrawalId || '').trim();
+  const next = String(status || '').trim().toLowerCase();
+  if (!['completed', 'denied'].includes(next)) fail(400, 'Choose completed or denied');
+  const row = (state.withdrawals || []).find((item) => item.id === id);
+  if (!row) fail(404, 'Withdrawal not found');
+  if (row.status !== 'pending') fail(400, `That withdrawal is already ${row.status}`);
+  const user = state.users.find((item) => item.id === row.userId && !item.npc);
+  if (!user) fail(404, 'Player not found');
+  row.status = next === 'completed' ? 'processed' : 'denied';
+  row.resolvedAt = Date.now();
+  row.resolveNote = String(note || '').trim().slice(0, 500);
+  row.resolvedBy = String(by || '').trim().slice(0, 80);
+  if (next === 'denied') {
+    credit(state, user, row.amount, 'withdraw_refund', { withdrawal: id, note: row.resolveNote });
+    user.withdrawn = round(Math.max(0, (user.withdrawn || 0) - row.amount));
+  }
+  return {
+    withdrawal: withdrawalDto(row),
+    user: {
+      username: user.username,
+      userId: user.id,
+      discordId: String(user.discordId || ''),
+      balance: round(user.balance || 0),
+    },
+  };
+}
+
 export function sendTip(state, user, rawAmount, username) {
   const name = String(username || '').trim();
   if (!name) fail(400, 'Enter a username');

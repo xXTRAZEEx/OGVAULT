@@ -38,6 +38,7 @@ import {
   removeInventoryItem,
   resetLeaderboard,
   resolveShopItemIds,
+  resolveWithdrawal,
   setShopSale,
   settleAgreed,
 } from './logic.js';
@@ -3452,31 +3453,62 @@ export async function notifyListingCreated(match, host) {
   }
 }
 
-export async function notifyWithdrawal({ username, method, amount, fee, payout, destination }) {
+export async function notifyWithdrawal({
+  username,
+  userId,
+  discordId,
+  withdrawalId,
+  method,
+  amount,
+  fee,
+  payout,
+  destination,
+}) {
   if (!bot || botFailed) return;
   const key = WITHDRAW_CHANNELS[String(method || '').toLowerCase()];
   const channelId = String((key && process.env[key]) || '').trim();
   if (!/^\d{5,32}$/.test(channelId)) return;
+  const id = String(withdrawalId || '').trim();
   const embed = new EmbedBuilder()
     .setTitle(`${method} withdrawal`)
     .setColor(0x7aa2ff)
     .addFields(
       { name: 'Player', value: username || 'Unknown', inline: true },
+      { name: 'Site user id', value: userId ? `\`${userId}\`` : '—', inline: true },
+      { name: 'Discord', value: discordField(discordId), inline: true },
       { name: 'Amount', value: String(amount), inline: true },
       { name: 'Fee', value: String(fee), inline: true },
       { name: 'Pay out', value: String(payout), inline: true },
+      { name: 'Status', value: 'Pending', inline: true },
       { name: 'Send to', value: destinationText(method, destination) },
-    );
+    )
+    .setFooter({ text: id ? `withdrawal:${id}` : 'withdrawal' })
+    .setTimestamp();
   const methodName = String(method || '').toLowerCase();
-  const row = new ActionRowBuilder();
+  const copyRow = new ActionRowBuilder();
   if (methodName === 'crypto') {
-    row.addComponents(new ButtonBuilder().setCustomId('ogcopy:crypto').setLabel('Copy address').setStyle(ButtonStyle.Secondary));
+    copyRow.addComponents(new ButtonBuilder().setCustomId('ogcopy:crypto').setLabel('Copy address').setStyle(ButtonStyle.Secondary));
   } else if (methodName === 'paypal') {
-    row.addComponents(new ButtonBuilder().setCustomId('ogcopy:paypal').setLabel('Copy email').setStyle(ButtonStyle.Secondary));
+    copyRow.addComponents(new ButtonBuilder().setCustomId('ogcopy:paypal').setLabel('Copy email').setStyle(ButtonStyle.Secondary));
   }
+  const actionRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`ogwd:done:${id || 'unknown'}`)
+      .setLabel('Completed')
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(!id),
+    new ButtonBuilder()
+      .setCustomId(`ogwd:deny:${id || 'unknown'}`)
+      .setLabel('Denied')
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(!id),
+  );
+  const components = [];
+  if (copyRow.components.length) components.push(copyRow);
+  components.push(actionRow);
   try {
     const channel = await bot.channels.fetch(channelId);
-    await channel.send({ embeds: [embed], components: row.components.length ? [row] : [] });
+    await channel.send({ embeds: [embed], components });
   } catch {
     console.error('Could not post a withdrawal alert');
   }
@@ -3497,6 +3529,135 @@ export async function handleCopyWithdrawal(interaction) {
     return;
   }
   await interaction.reply({ content: `\`${value}\``, ephemeral: true });
+}
+
+function withdrawalIdFromCustomId(customId) {
+  const parts = String(customId || '').split(':');
+  return parts[parts.length - 1] || '';
+}
+
+function withdrawalResolveModal(kind, withdrawalId) {
+  const done = kind === 'done';
+  return new ModalBuilder()
+    .setCustomId(`ogwd:modal:${kind}:${withdrawalId}`)
+    .setTitle(done ? 'Mark withdrawal completed' : 'Deny withdrawal')
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('message')
+          .setLabel(done ? 'Message to the player' : 'Reason for the player')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMinLength(3)
+          .setMaxLength(500)
+          .setPlaceholder(done ? 'e.g. Sent via PayPal — check your email' : 'e.g. Destination details were invalid'),
+      ),
+    );
+}
+
+async function handleWithdrawActionButton(interaction) {
+  if (!(await isOwnerLevel(interaction))) {
+    await interaction.reply({ content: 'Only Owner and Management can resolve withdrawals.', ephemeral: true });
+    return;
+  }
+  const id = String(interaction.customId || '');
+  const kind = id.startsWith('ogwd:done:') ? 'done' : id.startsWith('ogwd:deny:') ? 'deny' : '';
+  const withdrawalId = withdrawalIdFromCustomId(id);
+  if (!kind || !withdrawalId || withdrawalId === 'unknown') {
+    await interaction.reply({ content: 'That withdrawal alert is missing an id.', ephemeral: true });
+    return;
+  }
+  const row = (load().withdrawals || []).find((item) => item.id === withdrawalId);
+  if (!row) {
+    await interaction.reply({ content: 'Withdrawal not found.', ephemeral: true });
+    return;
+  }
+  if (row.status !== 'pending') {
+    await interaction.reply({ content: `That withdrawal is already ${row.status}.`, ephemeral: true });
+    return;
+  }
+  await interaction.showModal(withdrawalResolveModal(kind, withdrawalId));
+}
+
+async function handleWithdrawResolveModal(interaction) {
+  if (!(await isOwnerLevel(interaction))) {
+    await interaction.reply({ content: 'Only Owner and Management can resolve withdrawals.', ephemeral: true });
+    return;
+  }
+  const id = String(interaction.customId || '');
+  const match = id.match(/^ogwd:modal:(done|deny):(.+)$/);
+  if (!match) {
+    await interaction.reply({ content: 'Invalid withdrawal form.', ephemeral: true });
+    return;
+  }
+  const kind = match[1];
+  const withdrawalId = match[2];
+  const message = String(interaction.fields.getTextInputValue('message') || '').trim();
+  if (message.length < 3) {
+    await interaction.reply({ content: 'Write a short message for the player.', ephemeral: true });
+    return;
+  }
+  let result;
+  try {
+    result = update((state) => resolveWithdrawal(state, withdrawalId, {
+      status: kind === 'done' ? 'completed' : 'denied',
+      note: message,
+      by: interaction.user.username || interaction.user.id,
+    }));
+  } catch (error) {
+    await interaction.reply({ content: error?.status ? error.message : 'Could not resolve that withdrawal.', ephemeral: true });
+    return;
+  }
+  const completed = kind === 'done';
+  const embed = EmbedBuilder.from(interaction.message.embeds[0] || {})
+    .setColor(completed ? 0x57f287 : 0xed4245)
+    .setTitle(completed ? 'Withdrawal completed' : 'Withdrawal denied');
+  const fields = (embed.data.fields || []).map((field) => (
+    field.name === 'Status'
+      ? { ...field, value: completed ? 'Completed' : 'Denied' }
+      : field
+  ));
+  if (!fields.some((field) => field.name === 'Status')) {
+    fields.push({ name: 'Status', value: completed ? 'Completed' : 'Denied', inline: true });
+  }
+  fields.push({ name: completed ? 'Staff note' : 'Denial reason', value: message.slice(0, 1024) });
+  fields.push({ name: 'Resolved by', value: `<@${interaction.user.id}>`, inline: true });
+  embed.setFields(fields);
+  const frozen = (interaction.message.components || []).map((row) =>
+    new ActionRowBuilder().addComponents(
+      row.components.map((component) => {
+        const button = ButtonBuilder.from(component);
+        button.setDisabled(true);
+        return button;
+      }),
+    ),
+  );
+  await interaction.update({ embeds: [embed], components: frozen }).catch(async () => {
+    await interaction.reply({ content: completed ? 'Marked completed.' : 'Marked denied.', ephemeral: true });
+  });
+  const discordId = String(result.user?.discordId || '').trim();
+  if (/^\d{5,32}$/.test(discordId)) {
+    try {
+      const dmUser = await interaction.client.users.fetch(discordId);
+      await dmUser.send({
+        content: completed
+          ? `Your OGVAULT withdrawal has been **completed**.\n\n**Amount** ${result.withdrawal.amount}\n**Paid out** ${result.withdrawal.payout}\n**Message** ${message}`
+          : `Your OGVAULT withdrawal has been **denied**.\n\n**Amount** ${result.withdrawal.amount} was returned to your balance.\n**Reason** ${message}`,
+      });
+    } catch {
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp({
+          content: 'Resolved on site, but the player could not be DM’d (DMs closed or Discord not linked).',
+          ephemeral: true,
+        }).catch(() => {});
+      }
+    }
+  } else if (interaction.replied || interaction.deferred) {
+    await interaction.followUp({
+      content: 'Resolved on site. That account has no linked Discord, so no DM was sent.',
+      ephemeral: true,
+    }).catch(() => {});
+  }
 }
 
 function paymentsChannelId() {
@@ -4325,6 +4486,17 @@ export function startDiscordAdmin(withPresence = true, withMembers = true) {
     }
     if (interaction.isButton() && String(interaction.customId || '').startsWith('ogvault:')) {
       handleCommunityButton(interaction).catch(() => {});
+      return;
+    }
+    if (
+      interaction.isButton()
+      && (String(interaction.customId || '').startsWith('ogwd:done:') || String(interaction.customId || '').startsWith('ogwd:deny:'))
+    ) {
+      handleWithdrawActionButton(interaction).catch(() => {});
+      return;
+    }
+    if (interaction.isModalSubmit() && String(interaction.customId || '').startsWith('ogwd:modal:')) {
+      handleWithdrawResolveModal(interaction).catch(() => {});
       return;
     }
     if (interaction.isButton() && String(interaction.customId || '').startsWith('ogcopy:')) {

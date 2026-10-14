@@ -2089,8 +2089,12 @@ app.post(
       return { ...walletSnapshot(state, user), withdrawal: { ...withdrawal, destination: withdrawal.destination } };
     });
     const row = result.withdrawal;
+    const player = load().users.find((item) => item.id === (result.user?.id || row.userId));
     notifyWithdrawal({
-      username: result.user?.username,
+      username: result.user?.username || player?.username,
+      userId: result.user?.id || row.userId,
+      discordId: String(player?.discordId || ''),
+      withdrawalId: row.id,
       method: row.method,
       amount: row.amount,
       fee: row.fee,

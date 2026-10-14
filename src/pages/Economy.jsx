@@ -709,7 +709,11 @@ export function Wallet() {
               {withdrawals.map((row) => (
                 <div className="tr tx" key={row.id}>
                   <span>{row.method} · {destinationLine(row)}{row.notify ? ' · email' : ''}</span>
-                  <span className="muted">{row.status === 'pending' ? dueLabel(row.readyAt, now) : 'Processed'}</span>
+                  <span className="muted">{
+                    row.status === 'pending' ? dueLabel(row.readyAt, now)
+                      : row.status === 'denied' ? 'Denied'
+                        : 'Completed'
+                  }</span>
                   <span className="down"><Amount value={-row.amount} />{row.payout != null ? <> · receive <Amount value={row.payout} /></> : null}</span>
                 </div>
               ))}
