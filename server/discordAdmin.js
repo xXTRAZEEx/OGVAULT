@@ -152,7 +152,7 @@ const commands = [
     ),
   adminOnly(new SlashCommandBuilder()
     .setName('code')
-    .setDescription('DM the game code to everyone with the Tournament role')
+    .setDescription('DM a hidden game-code unlock to registered Tournament players')
     .addStringOption((option) => option.setName('code').setDescription('The private game code').setRequired(true).setMaxLength(80))),
   adminOnly(new SlashCommandBuilder()
     .setName('purge')
@@ -1268,21 +1268,92 @@ async function handleCupRegister(interaction) {
   if (interaction.guild) await refreshTournamentPost(interaction.guild, cupId);
 }
 
+/** Reveal tokens for tournament codes — never put the raw code in the DM or button id. */
+const pendingGameCodes = new Map();
+const CODE_REVEAL_TTL_MS = 6 * 60 * 60 * 1000;
+
+function prunePendingGameCodes() {
+  const now = Date.now();
+  for (const [id, row] of pendingGameCodes) {
+    if (!row?.at || now - row.at > CODE_REVEAL_TTL_MS) pendingGameCodes.delete(id);
+  }
+}
+
+function storePendingGameCode(code, guildId) {
+  prunePendingGameCodes();
+  const id = crypto.randomBytes(12).toString('hex');
+  pendingGameCodes.set(id, {
+    code: String(code || ''),
+    guildId: String(guildId || ''),
+    at: Date.now(),
+  });
+  return id;
+}
+
 async function sendTournamentCode(guild, code) {
   const ids = registeredDiscordIds();
   let sent = 0;
   let failed = 0;
+  const value = String(code || '').trim();
   for (const id of ids) {
     try {
       const member = await guild.members.fetch(id);
       if (member.user.bot) continue;
-      await member.send(`**OGVAULT** — your private game code:\n\`${code}\``);
+      const revealId = storePendingGameCode(value, guild.id);
+      const embed = new EmbedBuilder()
+        .setTitle('OGVAULT private game code')
+        .setColor(0xf5c451)
+        .setDescription(
+          'Your code is ready. Press **Reveal & copy** below — only registered tournament players can unlock it.\n\n'
+          + 'The code is **not** shown in this message, so it stays hidden from screenshots and anyone without access.',
+        )
+        .setFooter({ text: 'Expires in 6 hours · Keep this DM private' });
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`ogcode:reveal:${revealId}`)
+          .setLabel('Reveal & copy')
+          .setStyle(ButtonStyle.Primary),
+      );
+      await member.send({ embeds: [embed], components: [row] });
       sent += 1;
     } catch {
       failed += 1;
     }
   }
   return { sent, failed, total: ids.length };
+}
+
+async function handleGameCodeReveal(interaction) {
+  const revealId = String(interaction.customId || '').slice('ogcode:reveal:'.length);
+  prunePendingGameCodes();
+  const entry = pendingGameCodes.get(revealId);
+  if (!entry?.code) {
+    await interaction.reply({
+      content: 'This code unlock expired or is invalid. Ask staff to send `/code` again.',
+      ephemeral: true,
+    });
+    return;
+  }
+  const guildId = entry.guildId || String(process.env.DISCORD_GUILD_ID || '').trim();
+  const guild = guildId ? await interaction.client.guilds.fetch(guildId).catch(() => null) : null;
+  if (!guild) {
+    await interaction.reply({ content: 'Could not verify tournament registration right now.', ephemeral: true });
+    return;
+  }
+  const member = await guild.members.fetch(interaction.user.id).catch(() => null);
+  const role = await ensureTournamentRole(guild);
+  const registered = new Set(registeredDiscordIds().map(String));
+  if (!member || !member.roles.cache.has(role.id) || !registered.has(String(interaction.user.id))) {
+    await interaction.reply({
+      content: 'Only registered tournament players can unlock this code.',
+      ephemeral: true,
+    });
+    return;
+  }
+  await interaction.reply({
+    content: `Your private game code (tap to copy):\n\`${entry.code}\``,
+    ephemeral: true,
+  });
 }
 
 function banAccount(username, lengthHours) {
@@ -3875,7 +3946,7 @@ const COMMAND_GUIDE = [
   ['/tokens remove', 'Remove tokens from one site account.'],
   ['/tournament create', 'Post a signup embed in #tournaments. Set signup time, event duration, slots, entry, and prize. Register gives a Tournament role until the event ends.'],
   ['/tournament end', 'Close a tournament now, lock Register, and clear Tournament roles. Leave name blank to end the latest one.'],
-  ['/code', 'DM a private game code to everyone who has the Tournament role.'],
+  ['/code', 'DM registered Tournament players a Reveal & copy button. The code stays hidden until they unlock it, and only while they still have the Tournament role.'],
   ['/website', 'Take the whole site offline for repair or maintenance, with an optional countdown, or bring it back online.'],
   ['/withdrawals list', 'List pending token withdrawal requests.'],
 ];
@@ -4486,6 +4557,10 @@ export function startDiscordAdmin(withPresence = true, withMembers = true) {
     }
     if (interaction.isButton() && String(interaction.customId || '').startsWith('ogvault:')) {
       handleCommunityButton(interaction).catch(() => {});
+      return;
+    }
+    if (interaction.isButton() && String(interaction.customId || '').startsWith('ogcode:reveal:')) {
+      handleGameCodeReveal(interaction).catch(() => {});
       return;
     }
     if (
