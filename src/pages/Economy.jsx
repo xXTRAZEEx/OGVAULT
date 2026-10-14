@@ -492,7 +492,8 @@ export function Wallet() {
   const [walletMeta, setWalletMeta] = useState({
     purchaseTax: 1.2,
     cryptoFee: 1.2,
-    withdrawFee: 3.15,
+    withdrawFeeRate: 0.04,
+    withdrawFeeFlat: 1,
     minWithdraw: 15,
     cryptoNetworks: NETWORKS,
   });
@@ -513,7 +514,8 @@ export function Wallet() {
     setWalletMeta({
       purchaseTax: data.purchaseTax ?? 1.2,
       cryptoFee: data.cryptoFee ?? 1.2,
-      withdrawFee: data.withdrawFee ?? 3.15,
+      withdrawFeeRate: data.withdrawFeeRate ?? 0.04,
+      withdrawFeeFlat: data.withdrawFeeFlat ?? 1,
       minWithdraw: data.minWithdraw ?? 15,
       cryptoNetworks: data.cryptoNetworks?.length ? data.cryptoNetworks : NETWORKS,
     });
@@ -560,7 +562,9 @@ export function Wallet() {
   }
 
   const withdrawValue = cents(amount);
-  const withdrawFee = withdrawValue > 0 ? walletMeta.withdrawFee : 0;
+  const withdrawFee = withdrawValue > 0
+    ? cents(withdrawValue * walletMeta.withdrawFeeRate + walletMeta.withdrawFeeFlat)
+    : 0;
   const withdrawReceive = cents(Math.max(0, withdrawValue - withdrawFee));
   const tipValue = cents(tipAmount);
   const tipFee = me?.vip ? 0 : cents(tipValue * 0.2);
@@ -620,7 +624,7 @@ export function Wallet() {
               <span>Available balance</span>
               <strong className="huge"><Amount value={me.balance} /></strong>
             </div>
-            <p>Minimum withdrawal is {walletMeta.minWithdraw}. A {gbp(walletMeta.withdrawFee)} fee is taken from that amount. Withdrawals take 24 hours.</p>
+            <p>Minimum withdrawal is {walletMeta.minWithdraw}. Fee is {Math.round(walletMeta.withdrawFeeRate * 100)}% + {gbp(walletMeta.withdrawFeeFlat)}, taken from that amount. Withdrawals take 24 hours.</p>
           </div>
           {lockNote}
           <form className="stack" onSubmit={async (event) => {

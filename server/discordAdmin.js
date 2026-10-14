@@ -132,9 +132,9 @@ const commands = [
     .addSubcommand((sub) =>
       sub
         .setName('view')
-        .setDescription('Show email, balance, and when the account was created')
+        .setDescription('Show email, balance, site id, and when the account was created')
         .addStringOption((option) =>
-          option.setName('username').setDescription('Site username, email, or Discord username').setRequired(true).setMaxLength(80)
+          option.setName('username').setDescription('Site user id, username, email, Discord username, or Discord id').setRequired(true).setMaxLength(80)
         )
     )
     .addSubcommand((sub) =>
@@ -142,7 +142,7 @@ const commands = [
         .setName('reset')
         .setDescription('Set a new password when they forgot the old one')
         .addStringOption((option) =>
-          option.setName('username').setDescription('Site username, email, or Discord username').setRequired(true).setMaxLength(80)
+          option.setName('username').setDescription('Site user id, username, email, Discord username, or Discord id').setRequired(true).setMaxLength(80)
         )
         .addStringOption((option) =>
           option.setName('password').setDescription('New password, 8–25 characters with a letter and a number').setRequired(true).setMinLength(8).setMaxLength(25)
@@ -153,8 +153,18 @@ const commands = [
         .setName('delete')
         .setDescription('Delete the site account')
         .addStringOption((option) =>
-          option.setName('username').setDescription('Site username, email, or Discord username').setRequired(true).setMaxLength(80)
+          option.setName('username').setDescription('Site user id, username, email, Discord username, or Discord id').setRequired(true).setMaxLength(80)
         )
+    )),
+  adminOnly(new SlashCommandBuilder()
+    .setName('lookup')
+    .setDescription('Find a site account by id or name and show account info')
+    .addStringOption((option) =>
+      option
+        .setName('query')
+        .setDescription('Site user id, username, email, Discord username, or Discord id')
+        .setRequired(true)
+        .setMaxLength(80)
     )),
   adminOnly(new SlashCommandBuilder()
     .setName('give')
@@ -414,8 +424,15 @@ function hours(raw) {
 }
 
 function findAccount(state, username) {
-  const query = String(username || '').trim().toLowerCase();
+  const raw = String(username || '').trim();
+  const query = raw.toLowerCase();
   if (!query) return null;
+  const byId = state.users.find((user) => !user.npc && String(user.id || '').toLowerCase() === query);
+  if (byId) return byId;
+  if (/^\d{5,32}$/.test(raw)) {
+    const byDiscord = state.users.find((user) => !user.npc && String(user.discordId || '') === raw);
+    if (byDiscord) return byDiscord;
+  }
   return (
     state.users.find((user) => !user.npc && user.username.toLowerCase() === query) ||
     state.users.find((user) => !user.npc && String(user.email || '').toLowerCase() === query) ||
@@ -431,7 +448,7 @@ function hashPw(password) {
 }
 
 function registeredAccount(user) {
-  if (!user) fail(404, 'No player by that name');
+  if (!user) fail(404, 'No player found for that id or name');
   return user;
 }
 
@@ -525,8 +542,10 @@ function matchHistoryPayload(query) {
 
 function accountDetails(user) {
   const created = user.createdAt ? `<t:${Math.floor(user.createdAt / 1000)}:f>` : 'Unknown';
+  const discordId = String(user.discordId || '').trim();
   return [
     `**Username** ${user.username}`,
+    `**Site user id** \`${user.id}\``,
     `**Email** ${user.email || 'None'}`,
     user.password
       ? '**Password** Saved as a hash, so the original cannot be shown. Use `/account reset` to set a new one.'
@@ -535,6 +554,7 @@ function accountDetails(user) {
     `**Created** ${created}`,
     `**VIP** ${isVip(user) ? 'Active' : 'No'}`,
     `**Discord** ${user.discordUsername ? `@${user.discordUsername}` : 'Not linked'}`,
+    `**Discord id** ${discordId ? `\`${discordId}\`` : 'Not linked'}`,
   ].join('\n');
 }
 
@@ -2519,6 +2539,12 @@ async function handleCommand(interaction) {
     return;
   }
   try {
+    if (interaction.commandName === 'lookup') {
+      const query = interaction.options.getString('query');
+      const user = registeredAccount(findAccount(load(), query));
+      await interaction.reply({ content: accountDetails(user), ephemeral: true });
+      return;
+    }
     if (interaction.commandName === 'account') {
       const sub = interaction.options.getSubcommand();
       const query = interaction.options.getString('username');
@@ -3322,14 +3348,23 @@ export async function notifyChargeback({
       console.error('Chargeback alert skipped: #chargebacks channel missing');
       return;
     }
-    await channel.send({ embeds: [embed] });
+    const management = channel.guild
+      ? await ensureManagementRole(channel.guild).catch(() => null)
+      : null;
+    const content = management ? `<@&${management.id}>` : '';
+    await channel.send({
+      content,
+      embeds: [embed],
+      allowedMentions: management ? { roles: [management.id] } : { parse: [] },
+    });
   } catch (error) {
     console.error('Could not post a chargeback alert', error?.message || '');
   }
 }
 
 const COMMAND_GUIDE = [
-  ['/account view', 'Show a site account, including Discord sign-ins: email, token balance, created date, VIP, and Discord.'],
+  ['/lookup', 'Find a site account by site user id, username, email, Discord username, or Discord id. Shows username, site id, balance, and Discord.'],
+  ['/account view', 'Same as /lookup: show a site account by id or name, including email, token balance, created date, VIP, and Discord.'],
   ['/account reset', 'Set a new password for an email account. Discord-only accounts have no password to reset.'],
   ['/account delete', 'Delete a site account, including a Discord sign-in, when they are not in an open match.'],
   ['/ban', 'Ban a site account from login and matchmaking for a number of hours.'],

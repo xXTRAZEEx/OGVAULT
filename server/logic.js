@@ -1260,8 +1260,15 @@ export function cryptoPriceGbp(tokens) {
 
 export const CRYPTO_NETWORKS = ['Solana'];
 export const MIN_WITHDRAW = 15;
-export const WITHDRAW_FEE = 3.15;
+export const WITHDRAW_FEE_RATE = 0.04;
+export const WITHDRAW_FEE_FLAT = 1;
 const WITHDRAW_MS = 24 * 60 * 60 * 1000;
+
+export function withdrawFeeQuote(amount) {
+  const value = round(amount);
+  const fee = round(value * WITHDRAW_FEE_RATE + WITHDRAW_FEE_FLAT);
+  return { amount: value, fee, payout: round(value - fee) };
+}
 
 export function tipQuote(user, amount) {
   const value = round(amount);
@@ -1310,7 +1317,8 @@ export function walletSnapshot(state, user) {
     cashout: { deposited: totalDeposited(state, user), required: CASHOUT_DEPOSIT_MIN, unlocked: cashoutUnlocked(state, user) },
     purchaseTax: PURCHASE_TAX_PENCE / 100,
     cryptoFee: CRYPTO_FEE_UNITS,
-    withdrawFee: WITHDRAW_FEE,
+    withdrawFeeRate: WITHDRAW_FEE_RATE,
+    withdrawFeeFlat: WITHDRAW_FEE_FLAT,
     minWithdraw: MIN_WITHDRAW,
     cryptoNetworks: CRYPTO_NETWORKS,
   };
@@ -1530,8 +1538,7 @@ export function requestWithdrawal(state, user, body) {
   assertCashoutUnlocked(state, user, 'withdraw');
   const amount = cashAmount(body.amount, 'a withdrawal amount');
   if (amount < MIN_WITHDRAW) fail(400, 'Minimum withdrawal is 15');
-  const fee = WITHDRAW_FEE;
-  const payout = round(amount - fee);
+  const { fee, payout } = withdrawFeeQuote(amount);
   if (payout <= 0) fail(400, 'Minimum withdrawal is 15');
   const method = String(body.method || '').trim().toLowerCase();
   if (!['paypal', 'crypto', 'bank'].includes(method)) fail(400, 'Choose PayPal, Crypto, or Bank');
