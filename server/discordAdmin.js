@@ -1029,10 +1029,40 @@ async function ensureTournamentRole(guild) {
     });
   }
   const me = guild.members.me || await guild.members.fetchMe().catch(() => null);
-  if (me && role.id !== me.roles.highest.id && role.comparePositionTo(me.roles.highest) >= 0) {
-    await role.setPosition(Math.max(1, me.roles.highest.position - 1)).catch(() => {});
+  if (me) {
+    // Tournament must sit below the bot or roles.add always fails.
+    const target = Math.max(1, me.roles.highest.position - 1);
+    if (role.position >= me.roles.highest.position) {
+      await role.setPosition(target, { reason: 'Keep Tournament below the bot so signup can assign it' }).catch(() => {});
+      role = await guild.roles.fetch(role.id).catch(() => role);
+    }
   }
   return role;
+}
+
+async function assignTournamentRole(guild, userId) {
+  const role = await ensureTournamentRole(guild);
+  const me = guild.members.me || await guild.members.fetchMe().catch(() => null);
+  if (!me?.permissions?.has(PermissionFlagsBits.ManageRoles)) {
+    return { ok: false, error: 'Bot needs Manage Roles to give Tournament.' };
+  }
+  if (role.position >= me.roles.highest.position) {
+    return { ok: false, error: 'Move the **Tournament** role below the bot role in Server Settings → Roles.' };
+  }
+  const member = await guild.members.fetch(userId).catch(() => null);
+  if (!member) return { ok: false, error: 'Could not find you in the server.' };
+  if (member.roles.cache.has(role.id)) return { ok: true, role };
+  try {
+    await member.roles.add(role, 'Registered for OGVAULT tournament');
+    return { ok: true, role };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error?.message?.includes('Missing Permissions') || error?.code === 50013
+        ? 'Move the **Tournament** role below the bot role in Server Settings → Roles.'
+        : (error?.message || 'Could not assign Tournament role.'),
+    };
+  }
 }
 
 function cupEventEnd(cup) {
@@ -1273,14 +1303,20 @@ async function handleCupRegister(interaction) {
     await interaction.reply({ content: error.status ? error.message : 'Could not register you.', ephemeral: true });
     return;
   }
-  if (interaction.guild && interaction.member) {
-    const role = await ensureTournamentRole(interaction.guild);
-    await interaction.member.roles.add(role).catch(() => {});
+  let roleNote = '';
+  if (interaction.guild) {
+    const assigned = await assignTournamentRole(interaction.guild, interaction.user.id);
+    if (!assigned.ok) {
+      roleNote = `\n\nRegistered, but the Tournament role was not added: ${assigned.error}`;
+      console.error('Tournament role assign failed', interaction.user.id, assigned.error);
+    }
   }
   await interaction.reply({
-    content: cup.entry > 0
-      ? `You are registered for **${cup.name}**. ${cup.entry} tokens were taken from your site balance. The Tournament role stays until the event ends.`
-      : `You are registered for **${cup.name}**. The Tournament role stays until the event ends.`,
+    content: (
+      cup.entry > 0
+        ? `You are registered for **${cup.name}**. ${cup.entry} tokens were taken from your site balance. The Tournament role stays until the event ends.`
+        : `You are registered for **${cup.name}**. The Tournament role stays until the event ends.`
+    ) + roleNote,
     ephemeral: true,
   });
   if (interaction.guild) await refreshTournamentPost(interaction.guild, cupId);
