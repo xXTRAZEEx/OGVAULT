@@ -2632,7 +2632,11 @@ server.listen(port, host, () => {
   setChatClearedHook(() => broadcast({ type: 'chatclear' }));
   setAnnouncementHook((row) => broadcast({ type: 'announcement', announcement: row }));
   setOnlineCount(() => sockets.size);
-  startDiscordAdmin();
+  if (process.env.OGVAULT_LOCAL === '1') {
+    console.log('Local mode: Discord bot not started (keeps the live VM bot as the only gateway)');
+  } else {
+    startDiscordAdmin();
+  }
 });
 
 setInterval(() => {

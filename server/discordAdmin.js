@@ -857,6 +857,7 @@ function createTournament(options) {
       maxPlayers: slots,
       endsAt,
       eventEndsAt,
+      createdAt: started,
       paidOut: false,
       board: [],
     };
@@ -960,17 +961,31 @@ function tournamentComponents(cup) {
   )];
 }
 
+const postingTournamentIds = new Set();
+
 async function postTournament(guild, cup) {
-  const channel = await ensureTournamentsChannel(guild);
-  const message = await channel.send({ embeds: [tournamentEmbed(cup)], components: tournamentComponents(cup) });
-  update((state) => {
-    const row = (state.tournaments || []).find((item) => item.id === cup.id);
-    if (row) {
-      row.discordChannelId = channel.id;
-      row.discordMessageId = message.id;
-    }
-  });
-  return message;
+  if (!cup?.id) return null;
+  if (postingTournamentIds.has(cup.id)) return null;
+  const existing = (load().tournaments || []).find((item) => item.id === cup.id);
+  if (existing?.discordMessageId) {
+    await refreshTournamentPost(guild, cup.id).catch(() => {});
+    return null;
+  }
+  postingTournamentIds.add(cup.id);
+  try {
+    const channel = await ensureTournamentsChannel(guild);
+    const message = await channel.send({ embeds: [tournamentEmbed(cup)], components: tournamentComponents(cup) });
+    update((state) => {
+      const row = (state.tournaments || []).find((item) => item.id === cup.id);
+      if (row) {
+        row.discordChannelId = channel.id;
+        row.discordMessageId = message.id;
+      }
+    });
+    return message;
+  } finally {
+    postingTournamentIds.delete(cup.id);
+  }
 }
 
 async function refreshTournamentPost(guild, cupId) {
@@ -988,8 +1003,11 @@ async function refreshTournamentPost(guild, cupId) {
 async function syncTournamentPosts(guild) {
   const channel = await ensureTournamentsChannel(guild);
   const state = load();
+  const now = Date.now();
   for (const cup of state.tournaments || []) {
-    if (!cup.discordMessageId && !cup.paidOut && Date.now() < cup.endsAt) {
+    if (!cup.discordMessageId && !cup.paidOut && now < cup.endsAt) {
+      // Give /tournament create time to finish posting before the sweeper duplicates it.
+      if (cup.createdAt && now - cup.createdAt < 20_000) continue;
       await postTournament(guild, cup).catch(() => {});
     } else if (cup.discordMessageId) {
       await refreshTournamentPost(guild, cup.id).catch(() => {});
@@ -2978,25 +2996,36 @@ async function handleCommand(interaction) {
     }
     if (interaction.commandName === 'tournament') {
       if (interaction.options.getSubcommand() === 'end') {
-        const closed = endTournaments(interaction.options.getString('name'));
-        for (const cup of closed) {
-          await refreshTournamentPost(interaction.guild, cup.id).catch(() => {});
+        await interaction.deferReply();
+        try {
+          const closed = endTournaments(interaction.options.getString('name'));
+          for (const cup of closed) {
+            await refreshTournamentPost(interaction.guild, cup.id).catch(() => {});
+          }
+          const stripped = await clearTournamentRoles(interaction.guild, boardDiscordIds(closed));
+          await sweepTournamentSignups(interaction.guild).catch(() => {});
+          await interaction.editReply({
+            content: closed.length === 1
+              ? `Ended **${closed[0].name}**. Cleared the Tournament role from ${stripped} member${stripped === 1 ? '' : 's'}.`
+              : `Ended ${closed.length} tournaments. Cleared the Tournament role from ${stripped} member${stripped === 1 ? '' : 's'}.`,
+          });
+        } catch (error) {
+          await interaction.editReply({ content: error?.status ? error.message : 'Could not end that tournament.' });
         }
-        const stripped = await clearTournamentRoles(interaction.guild, boardDiscordIds(closed));
-        await sweepTournamentSignups(interaction.guild).catch(() => {});
-        await interaction.reply({
-          content: closed.length === 1
-            ? `Ended **${closed[0].name}**. Cleared the Tournament role from ${stripped} member${stripped === 1 ? '' : 's'}.`
-            : `Ended ${closed.length} tournaments. Cleared the Tournament role from ${stripped} member${stripped === 1 ? '' : 's'}.`,
-        });
         return;
       }
-      await clearTournamentRoles(interaction.guild).catch(() => {});
-      const cup = createTournament(interaction.options);
-      await postTournament(interaction.guild, cup).catch(() => {});
-      await interaction.reply({
-        content: `**${cup.name}** (${cup.project} · ${cup.region}) is in #tournaments. ${cup.maxPlayers} slots. Signup closes <t:${Math.floor(cup.endsAt / 1000)}:R>. Event starts then and ends <t:${Math.floor(cupEventEnd(cup) / 1000)}:R>.`,
-      });
+      // Defer immediately — clearing roles + posting can exceed Discord's 3s reply window and retry the command (duplicate embeds).
+      await interaction.deferReply();
+      try {
+        await clearTournamentRoles(interaction.guild).catch(() => {});
+        const cup = createTournament(interaction.options);
+        await postTournament(interaction.guild, cup);
+        await interaction.editReply({
+          content: `**${cup.name}** (${cup.project} · ${cup.region}) is in #tournaments. ${cup.maxPlayers} slots. Signup closes <t:${Math.floor(cup.endsAt / 1000)}:R>. Event starts then and ends <t:${Math.floor(cupEventEnd(cup) / 1000)}:R>.`,
+        });
+      } catch (error) {
+        await interaction.editReply({ content: error?.status ? error.message : 'Could not create that tournament.' });
+      }
       return;
     }
     if (interaction.commandName === 'code') {

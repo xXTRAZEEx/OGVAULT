@@ -496,7 +496,7 @@ function addCupPoints(state, userId, match, score) {
 export function joinRegister(state, cupId, member) {
   ensureCups(state);
   const cup = state.tournaments.find((item) => item.id === cupId);
-  if (!cup) fail(404, 'That signup is closed');
+  if (!cup) fail(404, 'That signup is no longer available. Use the latest Reserve seat post (old duplicate embeds will not work).');
   if (cup.paidOut || Date.now() > cup.endsAt) fail(400, 'Registration is closed');
   if (cup.maxPlayers && cup.board.length >= cup.maxPlayers) fail(400, 'Registration is full');
   const discordId = String(member.id || '');
