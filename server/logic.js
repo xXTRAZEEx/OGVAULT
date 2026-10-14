@@ -1261,7 +1261,7 @@ export function cryptoPriceGbp(tokens) {
 export const CRYPTO_NETWORKS = ['Solana'];
 export const MIN_WITHDRAW = 15;
 export const WITHDRAW_FEE_RATE = 0.04;
-export const WITHDRAW_FEE_FLAT = 1;
+export const WITHDRAW_FEE_FLAT = 5;
 const WITHDRAW_MS = 24 * 60 * 60 * 1000;
 
 export function withdrawFeeQuote(amount) {

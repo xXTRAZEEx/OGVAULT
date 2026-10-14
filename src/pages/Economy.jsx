@@ -493,7 +493,7 @@ export function Wallet() {
     purchaseTax: 1.2,
     cryptoFee: 1.2,
     withdrawFeeRate: 0.04,
-    withdrawFeeFlat: 1,
+    withdrawFeeFlat: 5,
     minWithdraw: 15,
     cryptoNetworks: NETWORKS,
   });
@@ -515,7 +515,7 @@ export function Wallet() {
       purchaseTax: data.purchaseTax ?? 1.2,
       cryptoFee: data.cryptoFee ?? 1.2,
       withdrawFeeRate: data.withdrawFeeRate ?? 0.04,
-      withdrawFeeFlat: data.withdrawFeeFlat ?? 1,
+      withdrawFeeFlat: data.withdrawFeeFlat ?? 5,
       minWithdraw: data.minWithdraw ?? 15,
       cryptoNetworks: data.cryptoNetworks?.length ? data.cryptoNetworks : NETWORKS,
     });
