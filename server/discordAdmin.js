@@ -483,6 +483,25 @@ async function canUseStaffCommand(interaction) {
   return interactionCommandKeys(interaction).some((key) => roleHasCommandAccess(interaction.member, key));
 }
 
+function memberHasHelperOrReviewer(member) {
+  return !!member?.roles?.cache?.some((role) => STAFF_ACCESS_ROLE_NAMES.includes(role.name));
+}
+
+function channelInStaffCategory(channel) {
+  if (!channel) return false;
+  if (channel.parent?.name === 'Staff') return true;
+  if (channel.isThread?.() && channel.parent?.parent?.name === 'Staff') return true;
+  return false;
+}
+
+/** Helper/Reviewer staff kit only works in Staff-category channels. Member commands stay global. */
+async function helperReviewerStaffCommandsAllowedHere(interaction) {
+  if (PUBLIC_COMMANDS.has(interaction.commandName)) return true;
+  if (await isOwnerLevel(interaction)) return true;
+  if (!memberHasHelperOrReviewer(interaction.member)) return true;
+  return channelInStaffCategory(interaction.channel);
+}
+
 function grantCommandAccess(roleId, commandName) {
   const command = normalizeAccessCommand(commandName);
   if (!command) fail(400, 'Pick a grantable staff command');
@@ -2586,13 +2605,15 @@ const BOT_ROLE_ACCESS = {
     'See and reply in support tickets, and close them',
     'Talk in #staff-chat',
     'Handle /report Warn and Dismiss buttons in #filters',
-    'Slash commands: /lookup, /ban, /account view, /account reset, /match history, /stats',
+    'Staff slash commands only in the Staff category: /lookup, /ban, /account view, /account reset, /match history, /stats',
+    'Member commands (/balance, /earn, /report, /role) work in general and other channels',
   ],
   Reviewer: [
     'Press award buttons on clip-review messages',
     'Talk in #staff-chat',
     'Read message history on review channels',
-    'Slash commands: /lookup, /ban, /account view, /account reset, /match history, /stats',
+    'Staff slash commands only in the Staff category: /lookup, /ban, /account view, /account reset, /match history, /stats',
+    'Member commands (/balance, /earn, /report, /role) work in general and other channels',
   ],
   Member: [
     'Talk in member channels after verifying / linking Discord',
@@ -2757,6 +2778,13 @@ async function handleCommand(interaction) {
   }
   if (!(await canUseStaffCommand(interaction))) {
     await interaction.reply({ content: 'You cannot use this command', ephemeral: true });
+    return;
+  }
+  if (!(await helperReviewerStaffCommandsAllowedHere(interaction))) {
+    await interaction.reply({
+      content: 'Helpers and Reviewers can only use staff commands in the **Staff** category (for example #staff-chat or #command-list). Member commands like `/balance`, `/earn`, `/report`, and `/role` still work in general and other channels.',
+      ephemeral: true,
+    });
     return;
   }
   try {
@@ -3691,8 +3719,8 @@ function commandGuideEmbeds() {
       .setDescription(rest.join('\n\n') || '—')
       .addFields(
         { name: 'Management', value: 'Same OGVAULT command and staff access as Owner. For trusted alts.' },
-        { name: 'Reviewer', value: 'Clip review buttons, #staff-chat, and staff commands: /lookup, /ban, /account view, /account reset, /match history, /stats.' },
-        { name: 'Helper', value: 'Support tickets, #staff-chat, and the same staff commands as Reviewer: /lookup, /ban, /account view, /account reset, /match history, /stats.' },
+        { name: 'Reviewer', value: 'Clip review buttons, #staff-chat, and staff commands in the Staff category only: /lookup, /ban, /account view, /account reset, /match history, /stats. Member commands work everywhere.' },
+        { name: 'Helper', value: 'Support tickets, #staff-chat, and the same Staff-category commands as Reviewer. Member commands (/balance, /earn, /report, /role) work in general and other channels.' },
         { name: 'Content Creator', value: 'Display role only. No commands.' },
         { name: 'Member', value: 'Can talk in general, clips, and the community channels after linking a vault account. No slash commands.' },
         { name: 'Everyone', value: 'Can read the start-here channels, link a vault account, pick NA or EU, and open a support ticket.' },
