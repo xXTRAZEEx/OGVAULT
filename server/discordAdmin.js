@@ -186,12 +186,9 @@ const commands = [
     .addSubcommand((sub) =>
       sub
         .setName('reset')
-        .setDescription('Set a new password when they forgot the old one')
+        .setDescription('Generate a new password and DM it to the linked Discord user only')
         .addStringOption((option) =>
           option.setName('username').setDescription('Site user id, username, email, Discord username, or Discord id').setRequired(true).setMaxLength(80)
-        )
-        .addStringOption((option) =>
-          option.setName('password').setDescription('New password, 8–25 characters with a letter and a number').setRequired(true).setMinLength(8).setMaxLength(25)
         )
     )),
   adminOnly(new SlashCommandBuilder()
@@ -684,6 +681,20 @@ function hashPw(password) {
   return `${salt}:${hash}`;
 }
 
+/** 12-character temp password with at least one letter and one number. */
+function generateTempPassword(length = 12) {
+  const letters = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ';
+  const digits = '23456789';
+  const all = letters + digits;
+  const bytes = crypto.randomBytes(length + 2);
+  let out = '';
+  for (let i = 0; i < length; i += 1) out += all[bytes[i] % all.length];
+  const chars = out.split('');
+  chars[bytes[length] % length] = letters[bytes[length] % letters.length];
+  chars[(bytes[length + 1] % length)] = digits[bytes[length + 1] % digits.length];
+  return chars.join('');
+}
+
 function registeredAccount(user) {
   if (!user) fail(404, 'No player found for that id or name');
   return user;
@@ -785,7 +796,7 @@ function accountDetails(user) {
     `**Site user id** \`${user.id}\``,
     `**Email** ${user.email || 'None'}`,
     user.password
-      ? '**Password** Saved as a hash, so the original cannot be shown. Use `/account reset` to set a new one.'
+      ? '**Password** Saved as a hash, so the original cannot be shown. Use `/account reset` to DM them a new one.'
       : '**Password** None. This account signs in with Discord.',
     `**Balance** ${round(user.balance || 0)} tokens`,
     `**Created** ${created}`,
@@ -2858,19 +2869,35 @@ async function handleCommand(interaction) {
         return;
       }
       if (sub === 'reset') {
-        const password = String(interaction.options.getString('password') || '');
-        if (password.length < 8 || password.length > 25 || !/[a-zA-Z]/.test(password) || !/\d/.test(password)) {
-          fail(400, 'Password is 8–25 characters with a letter and a number');
+        const state = load();
+        const user = registeredAccount(findAccount(state, query));
+        if (!user.password) fail(400, 'That account signs in with Discord, so there is no password to reset');
+        const discordId = String(user.discordId || '').trim();
+        if (!/^\d{5,32}$/.test(discordId)) {
+          fail(400, 'That account has no linked Discord, so the new password cannot be DM’d to them');
         }
-        const saved = update((state) => {
-          const user = registeredAccount(findAccount(state, query));
-          if (!user.password) fail(400, 'That account signs in with Discord, so there is no password to reset');
-          user.password = hashPw(password);
-          clearSessions(state, user.id);
-          return user.username;
+        const password = generateTempPassword(12);
+        let dmUser;
+        try {
+          dmUser = await interaction.client.users.fetch(discordId);
+          await dmUser.send({
+            content:
+              `Your OGVAULT password was reset by staff.\n\n` +
+              `**Username** ${user.username}\n` +
+              `**New password** \`${password}\`\n\n` +
+              `Sign in at https://ogvault.co.uk with that password, then change it if you want. Do not share this message.`,
+          });
+        } catch {
+          fail(400, 'Could not DM them. Ask them to allow DMs from server members, then run `/account reset` again. The password was not changed.');
+        }
+        update((next) => {
+          const row = registeredAccount(findAccount(next, query));
+          row.password = hashPw(password);
+          clearSessions(next, row.id);
+          return row.username;
         });
         await interaction.reply({
-          content: `Password for **${saved}** is now set. They need to sign in with that new password. The old one cannot be recovered.`,
+          content: `Password for **${user.username}** was reset. A new 12-character password was sent to their Discord DMs only — staff cannot see it.`,
           ephemeral: true,
         });
         return;
@@ -3661,7 +3688,7 @@ const COMMAND_GUIDE = [
   ['/access list', 'Show which roles have been granted which staff commands.'],
   ['/lookup', 'Find a site account by site user id, username, email, Discord username, or Discord id. Shows username, site id, balance, and Discord.'],
   ['/account view', 'Same as /lookup: show a site account by id or name, including email, token balance, created date, VIP, and Discord.'],
-  ['/account reset', 'Set a new password for an email account. Discord-only accounts have no password to reset.'],
+  ['/account reset', 'Generate a unique 12-character password and DM it to the linked Discord user only. Staff never see the password. Discord-only accounts have no password to reset.'],
   ['/deleteaccount', 'Owner / Management only: delete a site account, including a Discord sign-in, when they are not in an open match.'],
   ['/ban', 'Ban a site account from login and matchmaking for a number of hours.'],
   ['/unban', 'Clear a site ban so the player can sign in again.'],
