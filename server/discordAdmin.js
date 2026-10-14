@@ -75,6 +75,9 @@ const PUBLIC_COMMANDS = new Set(['report', 'earn', 'role', 'balance']);
 const OWNER_LOCKED_COMMANDS = new Set(['access', 'live', 'website', 'giveall', 'resetleaderboard']);
 const GRANTABLE_COMMANDS = [
   'account',
+  'account view',
+  'account reset',
+  'account delete',
   'announcements',
   'ban',
   'blackjack',
@@ -85,6 +88,7 @@ const GRANTABLE_COMMANDS = [
   'inventory',
   'lookup',
   'match',
+  'match history',
   'matchmaking',
   'purge',
   'staffapps',
@@ -94,6 +98,16 @@ const GRANTABLE_COMMANDS = [
   'unban',
   'withdrawals',
 ];
+/** Fixed staff kit for Helper and Reviewer — synced on bot boot. */
+const HELPER_REVIEWER_COMMANDS = [
+  'lookup',
+  'ban',
+  'account view',
+  'account reset',
+  'match history',
+  'stats',
+];
+const STAFF_ACCESS_ROLE_NAMES = ['Helper', 'Reviewer'];
 
 const commands = [
   staffCommand(new SlashCommandBuilder()
@@ -437,7 +451,7 @@ function commandAccessMap(state = load()) {
 }
 
 function normalizeAccessCommand(raw) {
-  const name = String(raw || '').trim().toLowerCase().replace(/^\//, '');
+  const name = String(raw || '').trim().toLowerCase().replace(/^\//, '').replace(/\s+/g, ' ');
   if (!name) return '';
   if (GRANTABLE_COMMANDS.includes(name)) return name;
   return '';
@@ -449,12 +463,24 @@ function roleHasCommandAccess(member, commandName) {
   return roles.some((id) => member.roles.cache.has(String(id)));
 }
 
+function interactionCommandKeys(interaction) {
+  const name = interaction.commandName;
+  let sub = null;
+  try {
+    sub = interaction.options.getSubcommand(false);
+  } catch {
+    sub = null;
+  }
+  if (sub) return [`${name} ${sub}`, name];
+  return [name];
+}
+
 async function canUseStaffCommand(interaction) {
   if (await isOwnerLevel(interaction)) return true;
   const name = interaction.commandName;
   if (PUBLIC_COMMANDS.has(name)) return true;
   if (OWNER_LOCKED_COMMANDS.has(name)) return false;
-  return roleHasCommandAccess(interaction.member, name);
+  return interactionCommandKeys(interaction).some((key) => roleHasCommandAccess(interaction.member, key));
 }
 
 function grantCommandAccess(roleId, commandName) {
@@ -506,7 +532,7 @@ function listCommandAccess({ roleId = '', commandName = '' } = {}) {
   }
   if (!lines.length) {
     if (roleFilter || commandFilter) return 'No command access matches that filter.';
-    return 'No extra role command access yet. Owner and Management always have every staff command. Use `/access grant`.';
+    return 'No extra role command access yet. Owner and Management always have every staff command. Helper and Reviewer get a fixed kit on boot. Use `/access grant` for other roles.';
   }
   return lines.join('\n');
 }
@@ -517,6 +543,34 @@ function accessCommandChoices(query = '') {
     .filter((name) => !q || name.includes(q))
     .slice(0, 25)
     .map((name) => ({ name: `/${name}`, value: name }));
+}
+
+/** Keep Helper and Reviewer on the fixed staff command kit only. */
+async function syncHelperReviewerAccess(guild) {
+  if (!guild) return { roles: 0, commands: HELPER_REVIEWER_COMMANDS.slice() };
+  const roles = await guild.roles.fetch();
+  const targets = STAFF_ACCESS_ROLE_NAMES
+    .map((name) => roles.find((role) => role.name === name))
+    .filter(Boolean);
+  if (!targets.length) return { roles: 0, commands: HELPER_REVIEWER_COMMANDS.slice() };
+  const targetIds = new Set(targets.map((role) => String(role.id)));
+  update((state) => {
+    if (!state.commandAccess || typeof state.commandAccess !== 'object') state.commandAccess = {};
+    for (const [command, list] of Object.entries(state.commandAccess)) {
+      const next = (Array.isArray(list) ? list : []).map(String).filter((id) => !targetIds.has(id));
+      if (next.length) state.commandAccess[command] = next;
+      else delete state.commandAccess[command];
+    }
+    for (const command of HELPER_REVIEWER_COMMANDS) {
+      const list = Array.isArray(state.commandAccess[command]) ? state.commandAccess[command].map(String) : [];
+      for (const id of targetIds) {
+        if (!list.includes(id)) list.push(id);
+      }
+      state.commandAccess[command] = list;
+    }
+    return true;
+  });
+  return { roles: targets.length, commands: HELPER_REVIEWER_COMMANDS.slice() };
 }
 
 async function isOwnerLevel(interactionOrMember) {
@@ -2680,7 +2734,8 @@ async function handleCommand(interaction) {
     await replyOwnBalance(interaction).catch(() => {});
     return;
   }
-  if (!adminIds().length && !hasOwnerLevelRole(interaction.member) && !roleHasCommandAccess(interaction.member, interaction.commandName)) {
+  const hasGrantedAccess = interactionCommandKeys(interaction).some((key) => roleHasCommandAccess(interaction.member, key));
+  if (!adminIds().length && !hasOwnerLevelRole(interaction.member) && !hasGrantedAccess) {
     await interaction.reply({ content: 'Admin is not configured', ephemeral: true });
     return;
   }
@@ -3552,7 +3607,7 @@ export async function notifyChargeback({
 }
 
 const COMMAND_GUIDE = [
-  ['/access grant', 'Allow a Discord role to use a staff slash command (for example Helper → /stats). Owner and Management always have all commands.'],
+  ['/access grant', 'Allow a Discord role to use a staff slash command or subcommand (for example stats, account view). Owner and Management always have all commands. Helper and Reviewer are fixed on boot.'],
   ['/access revoke', 'Remove a role’s access to a staff slash command.'],
   ['/access list', 'Show which roles have been granted which staff commands.'],
   ['/lookup', 'Find a site account by site user id, username, email, Discord username, or Discord id. Shows username, site id, balance, and Discord.'],
@@ -3615,8 +3670,8 @@ function commandGuideEmbeds() {
       .setDescription(rest.join('\n\n') || '—')
       .addFields(
         { name: 'Management', value: 'Same OGVAULT command and staff access as Owner. For trusted alts.' },
-        { name: 'Reviewer', value: 'Can press the award buttons on a clip-review message and talk in #staff-chat. No slash commands.' },
-        { name: 'Helper', value: 'Can see support tickets, reply in them, close them, and talk in #staff-chat. No slash commands.' },
+        { name: 'Reviewer', value: 'Clip review buttons, #staff-chat, and staff commands: /lookup, /ban, /account view, /account reset, /match history, /stats.' },
+        { name: 'Helper', value: 'Support tickets, #staff-chat, and the same staff commands as Reviewer: /lookup, /ban, /account view, /account reset, /match history, /stats.' },
         { name: 'Content Creator', value: 'Display role only. No commands.' },
         { name: 'Member', value: 'Can talk in general, clips, and the community channels after linking a vault account. No slash commands.' },
         { name: 'Everyone', value: 'Can read the start-here channels, link a vault account, pick NA or EU, and open a support ticket.' },
@@ -4073,6 +4128,9 @@ export function startDiscordAdmin(withPresence = true, withMembers = true) {
       console.log('Discord admin slash commands registered');
       await ensureReviewerRole(guild);
       await syncManagementAssignments(guild).catch(() => console.error('Could not set up Management role'));
+      await syncHelperReviewerAccess(guild)
+        .then((result) => console.log(`Helper/Reviewer command access synced (${result.roles} roles)`))
+        .catch((error) => console.error('Could not sync Helper/Reviewer command access', error?.message || ''));
       await ensureGoldVipRole(guild);
       await sweepGoldVip();
       setInterval(() => { sweepGoldVip().catch(() => {}); }, 15 * 60 * 1000);
