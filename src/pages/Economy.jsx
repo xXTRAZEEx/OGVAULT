@@ -492,8 +492,8 @@ export function Wallet() {
   const [walletMeta, setWalletMeta] = useState({
     purchaseTax: 1.2,
     cryptoFee: 1.2,
-    withdrawFeeRate: 0.04,
-    withdrawFeeFlat: 5,
+    withdrawFeeRate: 0.05,
+    withdrawFeeFlat: 1,
     minWithdraw: 15,
     cryptoNetworks: NETWORKS,
   });
@@ -514,8 +514,8 @@ export function Wallet() {
     setWalletMeta({
       purchaseTax: data.purchaseTax ?? 1.2,
       cryptoFee: data.cryptoFee ?? 1.2,
-      withdrawFeeRate: data.withdrawFeeRate ?? 0.04,
-      withdrawFeeFlat: data.withdrawFeeFlat ?? 5,
+      withdrawFeeRate: data.withdrawFeeRate ?? 0.05,
+      withdrawFeeFlat: data.withdrawFeeFlat ?? 1,
       minWithdraw: data.minWithdraw ?? 15,
       cryptoNetworks: data.cryptoNetworks?.length ? data.cryptoNetworks : NETWORKS,
     });
