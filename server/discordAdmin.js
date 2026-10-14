@@ -3608,7 +3608,7 @@ function commandGuideEmbeds() {
     new EmbedBuilder()
       .setTitle('Command list')
       .setColor(0xf1c40f)
-      .setDescription('Slash commands are limited to **Owner** and **Management**.')
+      .setDescription('Staff slash commands are for **Owner** and **Management**, plus any roles you grant with `/access`.')
       .addFields({ name: 'Owner / Management', value: first }),
     new EmbedBuilder()
       .setColor(0xf1c40f)
