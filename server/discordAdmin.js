@@ -61,12 +61,42 @@ const REVIEWER_COLOR = 0x57f287;
 const REVIEWER_PERMISSIONS = [PermissionFlagsBits.ReadMessageHistory];
 const OWNER_LEVEL_ROLES = ['Owner', 'Management'];
 
+/** Owner-only Discord UI (Administrator). Most staff commands use runtime ACL instead. */
 function adminOnly(builder) {
-  return builder.setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+  return builder.setDefaultMemberPermissions(PermissionFlagsBits.Administrator).setDMPermission(false);
 }
 
+/** Visible without Administrator so granted roles can invoke; gated in handleCommand. */
+function staffCommand(builder) {
+  return builder.setDMPermission(false);
+}
+
+const PUBLIC_COMMANDS = new Set(['report', 'earn', 'role', 'balance']);
+const OWNER_LOCKED_COMMANDS = new Set(['access', 'live', 'website', 'giveall', 'resetleaderboard']);
+const GRANTABLE_COMMANDS = [
+  'account',
+  'announcements',
+  'ban',
+  'blackjack',
+  'check',
+  'code',
+  'discount',
+  'give',
+  'inventory',
+  'lookup',
+  'match',
+  'matchmaking',
+  'purge',
+  'staffapps',
+  'stats',
+  'tokens',
+  'tournament',
+  'unban',
+  'withdrawals',
+];
+
 const commands = [
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('tournament')
     .setDescription('Host or end a private tournament'))
     .addSubcommand((sub) =>
@@ -103,14 +133,14 @@ const commands = [
         .setDescription('End a tournament now — close signup and clear Tournament roles')
         .addStringOption((option) => option.setName('name').setDescription('Leave blank to end the latest open one').setRequired(false).setMaxLength(80))
     ),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('code')
     .setDescription('DM the game code to everyone with the Tournament role')
     .addStringOption((option) => option.setName('code').setDescription('The private game code').setRequired(true).setMaxLength(80))),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('purge')
     .setDescription('Delete every message in this Discord channel')),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('blackjack')
     .setDescription('Blackjack house settings'))
     .addSubcommand((sub) =>
@@ -126,7 +156,7 @@ const commands = [
             .setMaxValue(100)
         )
     ),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('account')
     .setDescription('Look up, reset, or delete a site account')
     .addSubcommand((sub) =>
@@ -156,7 +186,7 @@ const commands = [
           option.setName('username').setDescription('Site user id, username, email, Discord username, or Discord id').setRequired(true).setMaxLength(80)
         )
     )),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('lookup')
     .setDescription('Find a site account by id or name and show account info')
     .addStringOption((option) =>
@@ -166,28 +196,28 @@ const commands = [
         .setRequired(true)
         .setMaxLength(80)
     )),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('give')
     .setDescription('Give a Discord role to a member')
     .addUserOption((option) => option.setName('user').setDescription('Discord user').setRequired(true))
     .addRoleOption((option) => option.setName('role').setDescription('Role to give').setRequired(true))),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('stats')
     .setDescription('Show live site numbers, including how many people have preregistered')),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('ban')
     .setDescription('Ban a site account from login and matchmaking')
     .addStringOption((option) =>
       option.setName('username').setDescription('Site username or Discord username').setRequired(true).setMaxLength(64)
     )
     .addNumberOption((option) => option.setName('hours').setDescription('Ban length in hours').setRequired(true).setMinValue(0.01))),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('unban')
     .setDescription('Clear a site ban')
     .addStringOption((option) =>
       option.setName('username').setDescription('Site username or Discord username').setRequired(true).setMaxLength(64)
     )),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('matchmaking')
     .setDescription('Turn Kill Race matchmaking on or off')
     .addBooleanOption((option) => option.setName('enabled').setDescription('On allows new Kill Race listings').setRequired(true))
@@ -197,7 +227,7 @@ const commands = [
   adminOnly(new SlashCommandBuilder()
     .setName('resetleaderboard')
     .setDescription('Fully clear the site Kill Race profit leaderboard for every period')),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('discount')
     .setDescription('Discount the whole shop or specific items by a percent (0 clears)')
     .addIntegerOption((option) =>
@@ -262,12 +292,12 @@ const commands = [
     .setName('role')
     .setDescription('Show what permissions a Discord role has with OGVAULT')
     .addRoleOption((option) => option.setName('role').setDescription('Pick the role, for example Helper or Reviewer').setRequired(true)),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('announcements')
     .setDescription('Post a scrolling announcement on the site')
     .addStringOption((option) => option.setName('message').setDescription('What to announce').setRequired(true).setMaxLength(1500))
     .addStringOption((option) => option.setName('title').setDescription('Short heading. Leave blank to use a capital first line.').setRequired(false).setMaxLength(80))),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('staffapps')
     .setDescription('Open or close staff applications')
     .addStringOption((option) =>
@@ -284,7 +314,7 @@ const commands = [
     .addIntegerOption((option) =>
       option.setName('goal').setDescription('Member goal, for example 500').setMinValue(1).setMaxValue(1000000)
     )),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('match')
     .setDescription('Owner match tools')
     .addSubcommand((sub) =>
@@ -295,11 +325,11 @@ const commands = [
           option.setName('user').setDescription('Site username or Discord username').setRequired(true).setMaxLength(64)
         )
     )),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('check')
     .setDescription('Owner checks')
     .addSubcommand((sub) => sub.setName('rate').setDescription('Live count of members with the OGVAULT status'))),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('inventory')
     .setDescription('Show a site user inventory and add or remove items')
     .addStringOption((option) =>
@@ -328,11 +358,11 @@ const commands = [
             .addChoices(...INVENTORY_GRANTS.map((grant) => ({ name: grant.label, value: grant.key })))
         )
     )),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('withdrawals')
     .setDescription('List pending token withdrawal requests')
     .addSubcommand((sub) => sub.setName('list').setDescription('Show pending withdrawals'))),
-  adminOnly(new SlashCommandBuilder()
+  staffCommand(new SlashCommandBuilder()
     .setName('tokens')
     .setDescription('Add or remove site tokens')
     .addSubcommand((sub) =>
@@ -353,6 +383,36 @@ const commands = [
         )
         .addNumberOption((option) => option.setName('amount').setDescription('Tokens to remove').setRequired(true).setMinValue(0.01))
     )),
+  adminOnly(new SlashCommandBuilder()
+    .setName('access')
+    .setDescription('Grant or revoke staff slash commands for a role')
+    .addSubcommand((sub) =>
+      sub
+        .setName('grant')
+        .setDescription('Allow a role to use a staff command')
+        .addRoleOption((option) => option.setName('role').setDescription('Role to allow').setRequired(true))
+        .addStringOption((option) =>
+          option.setName('command').setDescription('Command name, e.g. stats').setRequired(true).setAutocomplete(true)
+        )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('revoke')
+        .setDescription('Remove a role from a staff command')
+        .addRoleOption((option) => option.setName('role').setDescription('Role to remove').setRequired(true))
+        .addStringOption((option) =>
+          option.setName('command').setDescription('Command name, e.g. stats').setRequired(true).setAutocomplete(true)
+        )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('list')
+        .setDescription('Show which roles can use which staff commands')
+        .addRoleOption((option) => option.setName('role').setDescription('Only show this role').setRequired(false))
+        .addStringOption((option) =>
+          option.setName('command').setDescription('Only show this command').setRequired(false).setAutocomplete(true)
+        )
+    )),
 ].map((command) => command.toJSON());
 
 function parseIdList(raw) {
@@ -369,6 +429,94 @@ function adminIds() {
 
 function hasOwnerLevelRole(member) {
   return !!member?.roles?.cache?.some((role) => OWNER_LEVEL_ROLES.includes(role.name));
+}
+
+function commandAccessMap(state = load()) {
+  const raw = state.commandAccess;
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+}
+
+function normalizeAccessCommand(raw) {
+  const name = String(raw || '').trim().toLowerCase().replace(/^\//, '');
+  if (!name) return '';
+  if (GRANTABLE_COMMANDS.includes(name)) return name;
+  return '';
+}
+
+function roleHasCommandAccess(member, commandName) {
+  const roles = commandAccessMap()[commandName] || [];
+  if (!roles.length || !member?.roles?.cache) return false;
+  return roles.some((id) => member.roles.cache.has(String(id)));
+}
+
+async function canUseStaffCommand(interaction) {
+  if (await isOwnerLevel(interaction)) return true;
+  const name = interaction.commandName;
+  if (PUBLIC_COMMANDS.has(name)) return true;
+  if (OWNER_LOCKED_COMMANDS.has(name)) return false;
+  return roleHasCommandAccess(interaction.member, name);
+}
+
+function grantCommandAccess(roleId, commandName) {
+  const command = normalizeAccessCommand(commandName);
+  if (!command) fail(400, 'Pick a grantable staff command');
+  const id = String(roleId || '');
+  if (!/^\d{5,32}$/.test(id)) fail(400, 'Pick a role');
+  return update((state) => {
+    if (!state.commandAccess || typeof state.commandAccess !== 'object') state.commandAccess = {};
+    const list = Array.isArray(state.commandAccess[command]) ? state.commandAccess[command].map(String) : [];
+    if (!list.includes(id)) list.push(id);
+    state.commandAccess[command] = list;
+    return { command, roleId: id, roles: list };
+  });
+}
+
+function revokeCommandAccess(roleId, commandName) {
+  const command = normalizeAccessCommand(commandName);
+  if (!command) fail(400, 'Pick a grantable staff command');
+  const id = String(roleId || '');
+  if (!/^\d{5,32}$/.test(id)) fail(400, 'Pick a role');
+  return update((state) => {
+    if (!state.commandAccess || typeof state.commandAccess !== 'object') state.commandAccess = {};
+    const list = (Array.isArray(state.commandAccess[command]) ? state.commandAccess[command] : [])
+      .map(String)
+      .filter((item) => item !== id);
+    if (list.length) state.commandAccess[command] = list;
+    else delete state.commandAccess[command];
+    return { command, roleId: id, roles: list };
+  });
+}
+
+function listCommandAccess({ roleId = '', commandName = '' } = {}) {
+  const map = commandAccessMap();
+  const commandFilter = normalizeAccessCommand(commandName);
+  const roleFilter = String(roleId || '');
+  const lines = [];
+  for (const command of GRANTABLE_COMMANDS) {
+    if (commandFilter && command !== commandFilter) continue;
+    const roles = (map[command] || []).map(String).filter(Boolean);
+    const filtered = roleFilter ? roles.filter((id) => id === roleFilter) : roles;
+    if (roleFilter && !filtered.length) continue;
+    if (!filtered.length && (commandFilter || roleFilter)) {
+      lines.push(`**/${command}** — no roles`);
+      continue;
+    }
+    if (!filtered.length) continue;
+    lines.push(`**/${command}** — ${filtered.map((id) => `<@&${id}>`).join(', ')}`);
+  }
+  if (!lines.length) {
+    if (roleFilter || commandFilter) return 'No command access matches that filter.';
+    return 'No extra role command access yet. Owner and Management always have every staff command. Use `/access grant`.';
+  }
+  return lines.join('\n');
+}
+
+function accessCommandChoices(query = '') {
+  const q = String(query || '').toLowerCase().replace(/^\//, '');
+  return GRANTABLE_COMMANDS
+    .filter((name) => !q || name.includes(q))
+    .slice(0, 25)
+    .map((name) => ({ name: `/${name}`, value: name }));
 }
 
 async function isOwnerLevel(interactionOrMember) {
@@ -2532,15 +2680,54 @@ async function handleCommand(interaction) {
     await replyOwnBalance(interaction).catch(() => {});
     return;
   }
-  if (!adminIds().length && !hasOwnerLevelRole(interaction.member)) {
+  if (!adminIds().length && !hasOwnerLevelRole(interaction.member) && !roleHasCommandAccess(interaction.member, interaction.commandName)) {
     await interaction.reply({ content: 'Admin is not configured', ephemeral: true });
     return;
   }
-  if (!(await isOwnerLevel(interaction))) {
+  if (!(await canUseStaffCommand(interaction))) {
     await interaction.reply({ content: 'You cannot use this command', ephemeral: true });
     return;
   }
   try {
+    if (interaction.commandName === 'access') {
+      if (!(await isOwnerLevel(interaction))) {
+        await interaction.reply({ content: 'Only Owner and Management can change command access.', ephemeral: true });
+        return;
+      }
+      const sub = interaction.options.getSubcommand();
+      if (sub === 'list') {
+        const role = interaction.options.getRole('role');
+        const command = interaction.options.getString('command');
+        await interaction.reply({
+          content: listCommandAccess({ roleId: role?.id || '', commandName: command || '' }),
+          ephemeral: true,
+          allowedMentions: { parse: [] },
+        });
+        return;
+      }
+      const role = interaction.options.getRole('role');
+      const command = interaction.options.getString('command');
+      if (!role) fail(400, 'Pick a role');
+      if (OWNER_LEVEL_ROLES.includes(role.name)) {
+        fail(400, `${role.name} already has every staff command`);
+      }
+      if (sub === 'grant') {
+        const saved = grantCommandAccess(role.id, command);
+        await interaction.reply({
+          content: `Granted **/${saved.command}** to ${role}. They can use it now.`,
+          ephemeral: true,
+          allowedMentions: { parse: [] },
+        });
+        return;
+      }
+      const saved = revokeCommandAccess(role.id, command);
+      await interaction.reply({
+        content: `Revoked **/${saved.command}** from ${role}.`,
+        ephemeral: true,
+        allowedMentions: { parse: [] },
+      });
+      return;
+    }
     if (interaction.commandName === 'lookup') {
       const query = interaction.options.getString('query');
       const user = registeredAccount(findAccount(load(), query));
@@ -3365,6 +3552,9 @@ export async function notifyChargeback({
 }
 
 const COMMAND_GUIDE = [
+  ['/access grant', 'Allow a Discord role to use a staff slash command (for example Helper → /stats). Owner and Management always have all commands.'],
+  ['/access revoke', 'Remove a role’s access to a staff slash command.'],
+  ['/access list', 'Show which roles have been granted which staff commands.'],
   ['/lookup', 'Find a site account by site user id, username, email, Discord username, or Discord id. Shows username, site id, balance, and Discord.'],
   ['/account view', 'Same as /lookup: show a site account by id or name, including email, token balance, created date, VIP, and Discord.'],
   ['/account reset', 'Set a new password for an email account. Discord-only accounts have no password to reset.'],
@@ -3921,6 +4111,15 @@ export function startDiscordAdmin(withPresence = true, withMembers = true) {
     }
   });
   client.on('interactionCreate', (interaction) => {
+    if (interaction.isAutocomplete() && interaction.commandName === 'access') {
+      const focused = interaction.options.getFocused(true);
+      if (focused?.name === 'command') {
+        interaction.respond(accessCommandChoices(focused.value)).catch(() => {});
+      } else {
+        interaction.respond([]).catch(() => {});
+      }
+      return;
+    }
     if (interaction.isAutocomplete() && interaction.commandName === 'discount') {
       const focused = interaction.options.getFocused(true);
       const query = String(focused?.value || '').toLowerCase();
