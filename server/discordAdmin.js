@@ -1308,6 +1308,12 @@ function storePendingGameCode(code, guildId) {
   return id;
 }
 
+function discordSpoilerCode(code) {
+  // Spoiler markers break if the code itself contains ||
+  const safe = String(code || '').replace(/\|/g, '¦').trim();
+  return `||${safe}||`;
+}
+
 async function sendTournamentCode(guild, code) {
   const ids = registeredDiscordIds();
   let sent = 0;
@@ -1322,14 +1328,14 @@ async function sendTournamentCode(guild, code) {
         .setTitle('OGVAULT private game code')
         .setColor(0xf5c451)
         .setDescription(
-          'Your code is ready. Press **Reveal & copy** below — only registered tournament players can unlock it.\n\n'
-          + 'The code is **not** shown in this message, so it stays hidden from screenshots and anyone without access.',
+          'Press **Copy code** below. You’ll get a **hidden spoiler** — tap it only when you need to copy for the game.\n\n'
+          + 'If someone pastes that into Discord, it stays blacked out like **** until they click it. Only registered tournament players can unlock the button.',
         )
-        .setFooter({ text: 'Expires in 6 hours · Keep this DM private' });
+        .setFooter({ text: 'Expires in 6 hours · Do not share outside Discord' });
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId(`ogcode:reveal:${revealId}`)
-          .setLabel('Reveal & copy')
+          .setLabel('Copy code')
           .setStyle(ButtonStyle.Primary),
       );
       await member.send({ embeds: [embed], components: [row] });
@@ -1369,7 +1375,9 @@ async function handleGameCodeReveal(interaction) {
     return;
   }
   await interaction.reply({
-    content: `Your private game code (tap to copy):\n\`${entry.code}\``,
+    content:
+      'Hidden game code (tap the black bar, then copy). Pasting in Discord keeps it spoilered:\n'
+      + discordSpoilerCode(entry.code),
     ephemeral: true,
   });
 }
@@ -3975,7 +3983,7 @@ const COMMAND_GUIDE = [
   ['/tokens remove', 'Remove tokens from one site account.'],
   ['/tournament create', 'Post a signup embed in #tournaments. Set signup time, event duration, slots, entry, and prize. Register gives a Tournament role until the event ends.'],
   ['/tournament end', 'Close a tournament now, lock Register, and clear Tournament roles. Leave name blank to end the latest one.'],
-  ['/code', 'DM registered Tournament players a Reveal & copy button. The code stays hidden until they unlock it, and only while they still have the Tournament role.'],
+  ['/code', 'DM registered Tournament players a Copy code button. They get a Discord spoiler (blacked out); pasting in Discord stays hidden until clicked.'],
   ['/website', 'Take the whole site offline for repair or maintenance, with an optional countdown, or bring it back online.'],
   ['/withdrawals list', 'List pending token withdrawal requests.'],
 ];
