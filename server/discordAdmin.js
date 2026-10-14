@@ -75,12 +75,11 @@ function staffKitCommand(builder) {
 }
 
 const PUBLIC_COMMANDS = new Set(['report', 'earn', 'role', 'balance']);
-const OWNER_LOCKED_COMMANDS = new Set(['access', 'live', 'website', 'giveall', 'resetleaderboard']);
+const OWNER_LOCKED_COMMANDS = new Set(['access', 'live', 'website', 'giveall', 'resetleaderboard', 'deleteaccount']);
 const GRANTABLE_COMMANDS = [
   'account',
   'account view',
   'account reset',
-  'account delete',
   'announcements',
   'ban',
   'blackjack',
@@ -175,7 +174,7 @@ const commands = [
     ),
   staffKitCommand(new SlashCommandBuilder()
     .setName('account')
-    .setDescription('Look up, reset, or delete a site account')
+    .setDescription('Look up or reset a site account')
     .addSubcommand((sub) =>
       sub
         .setName('view')
@@ -194,14 +193,12 @@ const commands = [
         .addStringOption((option) =>
           option.setName('password').setDescription('New password, 8–25 characters with a letter and a number').setRequired(true).setMinLength(8).setMaxLength(25)
         )
-    )
-    .addSubcommand((sub) =>
-      sub
-        .setName('delete')
-        .setDescription('Delete the site account')
-        .addStringOption((option) =>
-          option.setName('username').setDescription('Site user id, username, email, Discord username, or Discord id').setRequired(true).setMaxLength(80)
-        )
+    )),
+  adminOnly(new SlashCommandBuilder()
+    .setName('deleteaccount')
+    .setDescription('Delete a site account (Owner / Management only)')
+    .addStringOption((option) =>
+      option.setName('username').setDescription('Site user id, username, email, Discord username, or Discord id').setRequired(true).setMaxLength(80)
     )),
   staffKitCommand(new SlashCommandBuilder()
     .setName('lookup')
@@ -2809,6 +2806,21 @@ async function handleCommand(interaction) {
       await interaction.reply({ content: accountDetails(user), ephemeral: true });
       return;
     }
+    if (interaction.commandName === 'deleteaccount') {
+      const query = interaction.options.getString('username');
+      const removed = update((state) => {
+        const user = registeredAccount(findAccount(state, query));
+        if (openMatch(state, user.id)) fail(400, 'Finish their open match before deleting the account');
+        state.users = state.users.filter((item) => item.id !== user.id);
+        for (const other of state.users) {
+          if (Array.isArray(other.friends)) other.friends = other.friends.filter((id) => id !== user.id);
+        }
+        clearSessions(state, user.id);
+        return user.username;
+      });
+      await interaction.reply({ content: `Deleted **${removed}**.`, ephemeral: true });
+      return;
+    }
     if (interaction.commandName === 'account') {
       const sub = interaction.options.getSubcommand();
       const query = interaction.options.getString('username');
@@ -2835,18 +2847,7 @@ async function handleCommand(interaction) {
         });
         return;
       }
-      const removed = update((state) => {
-        const user = registeredAccount(findAccount(state, query));
-        if (openMatch(state, user.id)) fail(400, 'Finish their open match before deleting the account');
-        state.users = state.users.filter((item) => item.id !== user.id);
-        for (const other of state.users) {
-          if (Array.isArray(other.friends)) other.friends = other.friends.filter((id) => id !== user.id);
-        }
-        clearSessions(state, user.id);
-        return user.username;
-      });
-      await interaction.reply({ content: `Deleted **${removed}**.`, ephemeral: true });
-      return;
+      fail(400, 'Use /account view or /account reset');
     }
     if (interaction.commandName === 'tournament') {
       if (interaction.options.getSubcommand() === 'end') {
@@ -3633,7 +3634,7 @@ const COMMAND_GUIDE = [
   ['/lookup', 'Find a site account by site user id, username, email, Discord username, or Discord id. Shows username, site id, balance, and Discord.'],
   ['/account view', 'Same as /lookup: show a site account by id or name, including email, token balance, created date, VIP, and Discord.'],
   ['/account reset', 'Set a new password for an email account. Discord-only accounts have no password to reset.'],
-  ['/account delete', 'Delete a site account, including a Discord sign-in, when they are not in an open match.'],
+  ['/deleteaccount', 'Owner / Management only: delete a site account, including a Discord sign-in, when they are not in an open match.'],
   ['/ban', 'Ban a site account from login and matchmaking for a number of hours.'],
   ['/unban', 'Clear a site ban so the player can sign in again.'],
   ['/balance', 'Anyone can see their own tokens and Vault Points. Owners can add a username to look up a player.'],
